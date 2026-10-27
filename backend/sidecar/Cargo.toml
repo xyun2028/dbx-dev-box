@@ -1,0 +1,19 @@
+[package]
+name = "devbox-sidecar"
+version = "0.1.0"
+edition = "2021"
+description = "dev-box 的宿主外壳：JSONL over stdio，把请求转给引擎"
+
+[[bin]]
+name = "devbox-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+devbox-core = { path = "../core" }
+serde_json = "1"
+
+# NOTE M0：这里刻意手写 JSONL 协议，先把手感跑通。
+# 官方 Rust SDK（dbx-plugin-sdk）接入方式确认后，只需替换 main.rs 里的
+# 入口与分发逻辑；core 一行都不用改。
+# 若改用 SDK，依赖写成（具体 tag/分支以官方仓库为准）：
+#   dbx-plugin-sdk = { git = "https://github.com/t8y2/dbx", ... }

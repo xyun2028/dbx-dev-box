@@ -1,0 +1,10 @@
+[package]
+name = "devbox-core"
+version = "0.1.0"
+edition = "2021"
+description = "dev-box 引擎核心：事务状态机、平台抽象、路径安全。零外部依赖，可离线单测。"
+
+[dependencies]
+
+# 刻意保持零依赖：core 必须能在任何机器上 `cargo test` 跑通，
+# 不引入 tokio/serde，避免协议层变动牵连核心逻辑的测试。

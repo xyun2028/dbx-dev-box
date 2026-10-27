@@ -1,0 +1,25 @@
+# 构建配置（M0 最小集，字段名以官方 dbx-plugin.toml 规范为准）
+#
+# 注意：含 sidecar 的插件必须按平台分别发包，纯 universal 包不可用。
+# 打包脚本需按目标平台改写 manifest.entrypoints.backend.executable：
+#   windows-*  -> bin/devbox-sidecar.exe
+#   darwin/linux -> bin/devbox-sidecar
+
+include = [
+  "manifest.json",
+  "ui/**",
+  "assets/**",
+  "catalog/**",
+  "bin/**",
+]
+
+exclude = [
+  "backend/**",
+  "docs/**",
+  "target/**",
+  "dist/**",
+]
+
+[dev]
+# 先把 sidecar 构建到 bin/，再交给宿主加载
+build = ["cargo", "build", "--release", "--manifest-path", "backend/sidecar/Cargo.toml"]

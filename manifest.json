@@ -1,0 +1,35 @@
+{
+  "$schema": "https://raw.githubusercontent.com/t8y2/dbx/main/plugins/manifest.schema.json",
+  "manifest_version": 1,
+  "id": "com.devbox.manager",
+  "name": "dev-box",
+  "version": "0.1.0",
+  "publisher": "devbox",
+  "description": "一键搭建本地开发环境：JDK / Maven / MySQL / Redis / Nginx / Nacos / xxl-job，支持多版本共存与秒级切换",
+  "icon": "assets/icon.svg",
+  "engines": {
+    "host_api": "1.4"
+  },
+  "permissions": [
+    "host.workbench",
+    "host.events",
+    "host.binary",
+    "host.storage"
+  ],
+  "entrypoints": {
+    "backend": {
+      "executable": "bin/devbox-sidecar"
+    },
+    "ui": {
+      "root": "ui",
+      "entry": "ui/index.html"
+    }
+  },
+  "contributions": [
+    {
+      "type": "workbench",
+      "id": "com.devbox.manager.console",
+      "label": "dev-box"
+    }
+  ]
+}
