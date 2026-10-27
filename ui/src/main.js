@@ -93,7 +93,8 @@ const state = {
   // 演示数据也不许比真实情况"多能给"，否则截图和产品会对不上。
   components: [
     { id: "jdk", label: "JDK", kind: "toolchain", category: "java", desc: "Eclipse Temurin，多版本共存，切换只是改指针", versions: ["21.0.5", "17.0.13"], installed: [], unverified: ["21.0.5", "17.0.13"], active: null, sizeMb: 190 },
-    { id: "maven", label: "Maven", kind: "toolchain", category: "java", desc: "构建工具，运行时需要 JDK，会自动关联", versions: ["3.9.9"], installed: ["3.9.9"], unverified: [], active: "3.9.9", sizeMb: 9, requires: [{ component: "jdk", range: ">=8" }] },
+    { id: "maven", label: "Maven", kind: "toolchain", category: "java", desc: "构建工具，运行时需要 JDK，会自动关联", versions: ["3.9.9", "3.8.8"], installed: ["3.8.8", "3.9.9"], unverified: [], active: "3.9.9", sizeMb: 9, requires: [{ component: "jdk", range: ">=8" }] },
+    { id: "node", label: "Node.js", kind: "toolchain", category: "runtime", desc: "LTS 运行时，自带 npm/npx；切换版本同样只改指针", versions: ["22.11.0"], installed: ["22.11.0"], unverified: [], active: null, sizeMb: 31 },
     { id: "mysql", label: "MySQL", kind: "service", category: "database", desc: "实例化管理，同版本可跑多个库，数据与程序分离", versions: ["8.4.3"], installed: [], unverified: ["8.4.3"], sizeMb: 245, docker: true },
     { id: "nacos", label: "Nacos", kind: "service", category: "middleware", desc: "注册中心与配置中心，依赖 JDK 17+，自动先装", versions: ["2.3.2"], installed: [], unverified: ["2.3.2"], sizeMb: 130, docker: true, requires: [{ component: "jdk", range: ">=17 <22" }] },
   ],
@@ -149,6 +150,12 @@ async function connectHost() {
         };
         setTimeout(tick, 200);
         return { jobId };
+      }
+      if (method === "devbox/activate") {
+        const c = state.components.find((x) => x.id === params.component);
+        const previous = c?.active ?? null;
+        if (c) c.active = params.version;
+        return { ok: true, previous };
       }
       if (method === "devbox/job.cancel") return { accepted: true };
       throw new Error(`mock: ${method} 未实现`);

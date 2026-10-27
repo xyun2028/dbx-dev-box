@@ -126,6 +126,27 @@ fn dispatch(
             Ok(json!({ "jobId": job_id }))
         }
 
+        // 切换当前版本：只改指针，不重新下载
+        "devbox/activate" => {
+            let component = params
+                .get("component")
+                .and_then(Value::as_str)
+                .ok_or((-32602, "missing component".to_string()))?;
+            let version = params
+                .get("version")
+                .and_then(Value::as_str)
+                .ok_or((-32602, "missing version".to_string()))?;
+            match devbox_engine::activate(&data_root(), component, version, &platform.key()) {
+                Ok(a) => Ok(json!({
+                    "ok": true,
+                    "component": a.component,
+                    "version": a.version,
+                    "previous": a.previous,
+                })),
+                Err(e) => Err((-32001, e.to_string())),
+            }
+        }
+
         "devbox/job.get" => {
             let job_id = params
                 .get("jobId")
@@ -215,6 +236,7 @@ fn catalog_payload(
             "versions": versions,
             "unverified": unverified,
             "installed": installed_versions(root, &component.id, &key),
+            "active": devbox_engine::current(root, &component.id),
             "docker": component.kind == "service",
         }));
     }

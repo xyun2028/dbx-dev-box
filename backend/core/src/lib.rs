@@ -4,6 +4,7 @@
 //! - 这一层不知道 DBX 的存在，也不做任何 IO 编排，因此可以脱离宿主单测。
 //! - 所有"能不能"的判断都在这里：状态能否跳转、路径能否落盘、平台是否支持。
 
+pub mod activate;
 pub mod dep;
 pub mod job;
 pub mod mirror;

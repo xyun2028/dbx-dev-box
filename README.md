@@ -36,7 +36,9 @@ Design document: [`docs/plugin-architecture.md`](./docs/plugin-architecture.md) 
 | Resume after interruption | **Working** (206 append / 200 overwrite / 416 discard) |
 | Checksum enforcement | sha256 and sha512, placeholders rejected at parse time |
 | Mirror fallback | User-configured first, then original; 404 does *not* fall back |
-| Catalog (YAML) | Parsed; only **Maven 3.9.9** carries a real checksum today |
+| Catalog (YAML) | Parsed; changing a recipe needs no code change |
+| Verified recipes | **Maven 3.9.9 / 3.8.8**, **Node.js 22.11.0** — everything else is still a placeholder |
+| Version switching | **Working**: `current/<component>` link flips between installed versions in milliseconds |
 | Dependency resolution | Logic + tests done, not yet wired into the install flow |
 | Container (Docker) backend | Planning only — no `docker` calls yet |
 | Persistence (`detached` / `autostart`) | Not implemented (needs daemon mode) |
