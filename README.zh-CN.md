@@ -62,6 +62,9 @@ cargo test --manifest-path backend/engine/Cargo.toml
 
 # sidecar（DBX 插件的后端进程）
 cargo build --manifest-path backend/sidecar/Cargo.toml
+
+# 打包：生成 dist/*.dbxp 与便携试用包
+python scripts/package.py
 ```
 
 ### 真装一次

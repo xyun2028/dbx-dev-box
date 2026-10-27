@@ -66,6 +66,9 @@ cargo test --manifest-path backend/engine/Cargo.toml
 
 # sidecar (the DBX plugin backend)
 cargo build --manifest-path backend/sidecar/Cargo.toml
+
+# package: produces dist/*.dbxp plus a portable try-it kit
+python scripts/package.py
 ```
 
 ### Install something for real
