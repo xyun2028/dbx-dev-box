@@ -1006,6 +1006,57 @@ $env:PATH = "$DATA\bin" + [IO.Path]::PathSeparator + $env:PATH
 
 ---
 
+## 24. 插件包的硬约定
+
+这一节是从宿主安装器的行为反推出来的——不满足就装不上，而且报错不会解释为什么。
+
+### 24.1 三条硬约定
+
+| 约定 | 不满足的表现 |
+|---|---|
+| `manifest.entrypoints.backend.executable` 必须指向包内**真实存在**的文件，官方布局是 `bin/<target>/<binary>[.exe]` | `Plugin backend executable does not exist`，整个包被判为 incompatible |
+| 包根必须有 `checksums.json`，且 `files` **精确覆盖**除自身与 `signature.json` 之外的所有文件 | `Plugin package is missing checksums.json` / `Plugin checksums do not cover the package exactly; missing=...` |
+| zip 条目要带 Unix 权限位（bin 下 `0o755`，其余 `0o644`，`create_system=3`） | Unix 上侧车解出来是 `0o644`，**没有执行位，起不来**，而且不报错 |
+
+第二条是最容易踩的：宿主不做任何路径替换，我们之前写 `bin/devbox-sidecar.exe`、实际文件也放那儿，
+但官方约定是套一层 target 目录。**名字对不上就是 incompatible，不会帮你补 `.exe`，也不会补 target 段。**
+
+### 24.2 checksums.json 的形状
+
+```json
+{
+  "algorithm": "sha256",
+  "files": {
+    "manifest.json": "<hex>",
+    "bin/windows-x64/devbox-sidecar.exe": "<hex>",
+    "ui/index.html": "<hex>",
+    "assets/icon.svg": "<hex>"
+  }
+}
+```
+
+- `algorithm` 目前只认 `sha256`（其它值会报 `Unsupported plugin checksum algorithm`）。
+- 覆盖范围是"包内除 `checksums.json` / `signature.json` 之外的全部文件"，**多一个少一个都失败**。
+  所以我们打包时是先收集文件、算哈希、最后把 checksums.json 自己追加进去。
+
+### 24.3 未签名包
+
+`signature.json` 可以省略，但只能在插件中心打开「允许安装未签名开发包」之后安装。
+签名算法是 Ed25519，签名对象是 checksums 清单。我们目前不签名——**上架前必须走官方流程**。
+
+### 24.4 我们的实现
+
+`scripts/package.py` 一次做完：重写 manifest 的 executable → 收集文件 → 生成 checksums.json →
+按 Unix 模式压 zip → **自检覆盖是否精确** → 顺带产出 `<pkg>.artifact.json`（target / url / sha256 / size）。
+
+自检不是走过场：`verify_dbxp()` 会重新打开 zip，比对"包内文件集合"与"checksums 声明的集合"
+是否完全相等，不相等就返回非零退出码。这样这类错误在本地就被拦住，不用等宿主报错。
+
+顺带修了一个联动问题：可执行文件进了 `bin/<target>/` 之后，侧车再按 `exe 同级/../catalog` 找目录就错了。
+现在改成从 exe 所在目录**向上最多走四层**找 `catalog/`，包内布局和源码内布局都能命中。
+
+---
+
 ## 附：几个明确的"不做"
 
 - **不做**"自动修改用户全局环境变量、注册表、shell 配置文件"，除非用户单次明确点击。

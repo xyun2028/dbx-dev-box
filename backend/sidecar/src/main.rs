@@ -277,11 +277,16 @@ fn catalog_path() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
-        for candidate in [dir.join("../catalog/jdk.yaml"), dir.join("catalog/jdk.yaml")] {
+    // 可执行文件在包里的位置是 bin/<target>/<name>，往上找几层才到包根目录
+    if let Some(exe) = std::env::current_exe().ok() {
+        let mut dir = exe.parent().map(|p| p.to_path_buf());
+        for _ in 0..4 {
+            let Some(current) = dir else { break };
+            let candidate = current.join("catalog").join("jdk.yaml");
             if candidate.is_file() {
                 return Some(candidate);
             }
+            dir = current.parent().map(|p| p.to_path_buf());
         }
     }
     let cwd = std::env::current_dir().ok()?.join("catalog/jdk.yaml");

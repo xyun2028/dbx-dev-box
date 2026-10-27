@@ -67,7 +67,8 @@ cargo test --manifest-path backend/engine/Cargo.toml
 # sidecar (the DBX plugin backend)
 cargo build --manifest-path backend/sidecar/Cargo.toml
 
-# package: produces dist/*.dbxp plus a portable try-it kit
+# package: produces dist/<id>-<version>-<target>.dbxp plus a portable try-it kit
+# the script also self-checks that checksums.json covers the package exactly
 python scripts/package.py
 ```
 
@@ -162,6 +163,21 @@ Mirror lists must be measured, not assumed. This is also why a 404 does not trig
 404s in a row would waste eight seconds and hide the real error.
 
 ---
+
+## Packaging
+
+A `.dbxp` is a zip with three non-obvious requirements, all of which fail *silently* if you get
+them wrong (see `docs/plugin-architecture.md` §24):
+
+1. `entrypoints.backend.executable` must point at a file that exists in the package, by convention
+   `bin/<target>/<binary>[.exe]` — the host does no path rewriting at all.
+2. `checksums.json` must list sha256 for **every** file except itself and `signature.json`;
+   one missing or one extra entry rejects the whole package.
+3. Zip entries need Unix modes (`0o755` for binaries), otherwise the sidecar is extracted
+   non-executable on Linux/macOS and simply never starts.
+
+Unsigned packages can still be installed after enabling "allow unsigned development packages"
+in the plugin panel. Signing (Ed25519) is required before publishing.
 
 ## License
 

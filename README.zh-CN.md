@@ -63,7 +63,8 @@ cargo test --manifest-path backend/engine/Cargo.toml
 # sidecar（DBX 插件的后端进程）
 cargo build --manifest-path backend/sidecar/Cargo.toml
 
-# 打包：生成 dist/*.dbxp 与便携试用包
+# 打包：生成 dist/<id>-<version>-<target>.dbxp 与便携试用包
+# 脚本会自检 checksums.json 是否精确覆盖包内文件
 python scripts/package.py
 ```
 
@@ -154,6 +155,20 @@ docs/                    架构文档
 还会把真正的错误藏起来。
 
 ---
+
+## 打包
+
+`.dbxp` 就是个 zip，但有三条不明显的硬约定，弄错了都是**静默失败**（详见
+`docs/plugin-architecture.md` §24）：
+
+1. `entrypoints.backend.executable` 必须指向包内真实存在的文件，约定布局是
+   `bin/<target>/<binary>[.exe]`——宿主不做任何路径改写。
+2. `checksums.json` 必须列出**除自身与 `signature.json` 之外每一个文件**的 sha256；
+   少一个或多一个，整个包都会被拒。
+3. zip 条目要带 Unix 权限位（二进制 `0o755`），否则 Linux/macOS 上侧车解出来没有执行位，
+   根本起不来。
+
+未签名包可以在插件中心打开「允许安装未签名开发包」后安装；上架前必须走 Ed25519 签名。
 
 ## 许可证
 

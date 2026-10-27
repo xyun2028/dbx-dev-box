@@ -2,11 +2,15 @@
 """装配可分发的产物。
 
 两个东西：
-1. `<name>-<version>-<target>.dbxp` —— DBX 插件包（zip）
+1. `<id>-<version>-<target>.dbxp` —— DBX 插件包（zip，含 checksums.json）
 2. `devbox-try-<target>/` —— 便携试用套件，解压双击即可跑，不依赖 DBX
 
-不调用任何外部打包工具：本地没有 dbx-plugin CLI，这里只做"按约定摆放文件 + 压缩"。
-正式上架前必须由官方流程重新签名。
+DBX 插件包的硬约定（从宿主安装器与官方打包脚本反推，见 docs §24）：
+- `manifest.entrypoints.backend.executable` 必须指向包内真实存在的文件，
+  官方布局是 `bin/<target>/<binary>[.exe]`，宿主不做任何替换；
+- `checksums.json` 必须存在，形如 `{ "algorithm": "sha256", "files": { path: hex } }`，
+  且 files **精确覆盖**除自身与 signature.json 之外的全部文件；
+- zip 要带 Unix 权限位（bin 下 0o755、其余 0o644），否则 Unix 上侧车起不来。
 """
 
 from __future__ import annotations
@@ -23,50 +27,114 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
 
+# 打进包里的目录（都在包根下）
+PACK_DIRS = ["assets", "ui", "catalog"]
+SKIP_NAMES = {".DS_Store", "Thumbs.db"}
+
 
 def run(cmd: list[str], cwd: Path) -> None:
     print("  $", " ".join(cmd))
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
-def build(target: str) -> None:
+def build() -> None:
     print("→ 编译 release")
     run(["cargo", "build", "--release", "--manifest-path", "backend/sidecar/Cargo.toml"], ROOT)
     run(["cargo", "build", "--release", "--manifest-path", "backend/engine/Cargo.toml"], ROOT)
 
 
-def manifest_for(exe: str) -> dict:
-    data = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
-    data["entrypoints"]["backend"]["executable"] = f"bin/{exe}"
-    return data
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def walk(folder: Path, prefix: str) -> list[tuple[str, bytes]]:
+    out: list[tuple[str, bytes]] = []
+    for entry in sorted(folder.iterdir(), key=lambda p: p.name):
+        if entry.name.startswith((".", "_")) or entry.name in SKIP_NAMES:
+            continue
+        rel = f"{prefix}/{entry.name}"
+        if entry.is_dir():
+            out.extend(walk(entry, rel))
+        else:
+            out.append((rel, entry.read_bytes()))
+    return out
 
 
 def stage_plugin(target: str, exe: str, version: str) -> Path:
     out = DIST / f"devbox-plugin-{version}-{target}"
     if out.exists():
         shutil.rmtree(out)
-    (out / "bin").mkdir(parents=True)
+    (out / "bin" / target).mkdir(parents=True)
 
-    shutil.copy2(ROOT / "README.md", out / "README.md")
     shutil.copytree(ROOT / "assets", out / "assets")
     shutil.copytree(ROOT / "ui", out / "ui", ignore=shutil.ignore_patterns("node_modules", "*.map"))
     shutil.copytree(ROOT / "catalog", out / "catalog")
-    shutil.copy2(ROOT / "backend" / "sidecar" / "target" / "release" / exe, out / "bin" / exe)
+    shutil.copy2(ROOT / "backend" / "sidecar" / "target" / "release" / exe, out / "bin" / target / exe)
 
+    # manifest 里的 executable 必须与包内真实路径一字不差
+    data = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
+    data["entrypoints"]["backend"]["executable"] = f"bin/{target}/{exe}"
     (out / "manifest.json").write_text(
-        json.dumps(manifest_for(exe), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return out
 
 
-def zip_dir(src: Path, dest: Path) -> None:
+def collect(plugin_dir: Path, target: str, exe: str) -> list[tuple[str, bytes]]:
+    files: list[tuple[str, bytes]] = [
+        ("manifest.json", (plugin_dir / "manifest.json").read_bytes()),
+        (f"bin/{target}/{exe}", (plugin_dir / "bin" / target / exe).read_bytes()),
+    ]
+    for name in PACK_DIRS:
+        folder = plugin_dir / name
+        if folder.is_dir():
+            files.extend(walk(folder, name))
+    return files
+
+
+def write_dbxp(files: list[tuple[str, bytes]], exe_rel: str, dest: Path) -> None:
+    checksums = {"algorithm": "sha256", "files": {name: sha256_bytes(data) for name, data in files}}
+    payload = files + [
+        ("checksums.json", (json.dumps(checksums, indent=2) + "\n").encode("utf-8"))
+    ]
+
     if dest.exists():
         dest.unlink()
-    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(src.rglob("*")):
-            if path.is_file():
-                zf.write(path, path.relative_to(src).as_posix())
+    with zipfile.ZipFile(dest, "w") as zf:
+        for name, data in payload:
+            info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            info.create_system = 3  # Unix，宿主据此读权限位
+            # 可执行文件 0o755，其余 0o644；必须带 S_IFREG，格式与 zip crate 一致
+            mode = 0o100755 if name == exe_rel else 0o100644
+            info.external_attr = mode << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zf.writestr(info, data)
 
+
+def verify_dbxp(path: Path) -> tuple[int, bool]:
+    """自检：checksums 必须精确覆盖包内除自身与 signature.json 之外的所有文件。"""
+    with zipfile.ZipFile(path) as zf:
+        names = zf.namelist()
+        manifest = json.loads(zf.read("manifest.json"))
+        exe = manifest["entrypoints"]["backend"]["executable"]
+        covered = json.loads(zf.read("checksums.json"))["files"]
+        actual = {
+            n for n in names if n not in ("checksums.json", "signature.json") and not n.endswith("/")
+        }
+        exact = set(covered) == actual
+        missing = actual - set(covered)
+        extra = set(covered) - actual
+        if missing:
+            print(f"  ! checksums 未覆盖: {sorted(missing)}")
+        if extra:
+            print(f"  ! checksums 多出: {sorted(extra)}")
+        if exe not in names:
+            print(f"  ! manifest 指向的可执行文件不在包里: {exe}")
+            exact = False
+    return len(names), exact
+
+
+# ---------------------------------------------------------------- 试用套件
 
 TRY_CMD = r"""@echo off
 chcp 65001 >nul
@@ -163,7 +231,6 @@ TRY_DOC = """# dev-box 试用说明
 ## 已知限制
 
 - `devbox-install.exe` / `devbox-shim.exe` 是命令行工具，没有图形界面；图形界面在 `.dbxp` 包里，需要 DBX 宿主加载。
-- 安装包的签名：这个包是本地手工装配的，没有经过商店签名。
 """
 
 
@@ -182,7 +249,16 @@ def stage_try(target: str) -> Path:
     return out
 
 
-def sha256(path: Path) -> str:
+def zip_plain(src: Path, dest: Path) -> None:
+    if dest.exists():
+        dest.unlink()
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(src.rglob("*")):
+            if path.is_file():
+                zf.write(path, path.relative_to(src).as_posix())
+
+
+def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
@@ -196,30 +272,52 @@ def main() -> int:
     ap.add_argument("--skip-build", action="store_true")
     args = ap.parse_args()
 
-    version = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))["version"]
+    manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
+    version = manifest["version"]
+    plugin_id = manifest["id"]
     exe = "devbox-sidecar.exe" if args.target.startswith("windows") else "devbox-sidecar"
 
     if not args.skip_build:
-        build(args.target)
+        build()
 
     DIST.mkdir(exist_ok=True)
+
     print("→ 装配插件包")
     plugin_dir = stage_plugin(args.target, exe, version)
-    dbxp = DIST / f"devbox-{version}-{args.target}.dbxp"
-    zip_dir(plugin_dir, dbxp)
-    print(f"  {dbxp.relative_to(ROOT)}  {dbxp.stat().st_size / 1_048_576:.1f} MB")
+    files = collect(plugin_dir, args.target, exe)
+    exe_rel = f"bin/{args.target}/{exe}"
+    dbxp = DIST / f"{plugin_id}-{version}-{args.target}.dbxp"
+    write_dbxp(files, exe_rel, dbxp)
+    count, exact = verify_dbxp(dbxp)
+    flag = "✓ 精确覆盖" if exact else "✗ 覆盖不完整"
+    print(f"  {dbxp.relative_to(ROOT)}  {dbxp.stat().st_size / 1_048_576:.1f} MB  {count} 个文件  {flag}")
+
+    (DIST / f"{dbxp.stem}.artifact.json").write_text(
+        json.dumps(
+            {
+                "target": args.target,
+                "url": dbxp.name,
+                "sha256": sha256_file(dbxp),
+                "size": dbxp.stat().st_size,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     print("→ 装配试用套件")
     try_dir = stage_try(args.target)
     kit = DIST / f"devbox-try-{version}-{args.target}.zip"
-    zip_dir(try_dir, kit)
+    zip_plain(try_dir, kit)
     print(f"  {kit.relative_to(ROOT)}  {kit.stat().st_size / 1_048_576:.1f} MB")
 
     print()
     print("sha256")
-    print(f"  {dbxp.name}  {sha256(dbxp)}")
-    print(f"  {kit.name}  {sha256(kit)}")
-    return 0
+    print(f"  {dbxp.name}  {sha256_file(dbxp)}")
+    print(f"  {kit.name}  {sha256_file(kit)}")
+
+    return 0 if exact else 1
 
 
 if __name__ == "__main__":
