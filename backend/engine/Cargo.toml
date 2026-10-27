@@ -1,0 +1,19 @@
+[package]
+name = "devbox-engine"
+version = "0.1.0"
+edition = "2021"
+description = "devbox 引擎：下载、换源、校验、安全解压、原子提交"
+
+[[bin]]
+name = "devbox-install"
+path = "src/bin/install.rs"
+
+[dependencies]
+devbox-core = { path = "../core" }
+ureq = { version = "2", default-features = false, features = ["tls", "gzip"] }
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tar = "0.4"
+flate2 = "1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>dev-box</title>
+    <link rel="stylesheet" href="./src/app.css" />
+  </head>
+  <body>
+    <div class="shell" id="app">
+      <!-- 左侧：主导航。四个视图对应四类对象，不再只有"目录" -->
+      <aside class="rail">
+        <div class="brand">
+          <img class="brand-logo" src="../assets/icon.svg" alt="" />
+          <span class="brand-name">dev-box</span>
+        </div>
+
+        <nav class="nav" id="nav">
+          <button class="nav-item" data-view="overview" type="button">
+            <span class="nav-glyph"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg></span>
+            <span class="nav-label">概览</span>
+          </button>
+          <button class="nav-item" data-view="instances" type="button">
+            <span class="nav-glyph"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2.5" width="12" height="4.5" rx="1"/><rect x="2" y="9" width="12" height="4.5" rx="1"/><path d="M5 4.7h.01M5 11.2h.01" stroke-linecap="round"/></svg></span>
+            <span class="nav-label">服务</span>
+            <span class="nav-pill" id="nav-running">0</span>
+          </button>
+          <button class="nav-item" data-view="catalog" type="button">
+            <span class="nav-glyph"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 1.8 14 4.6v6.8L8 14.2 2 11.4V4.6z"/><path d="M2 4.6 8 7.4l6-2.8M8 7.4v6.8"/></svg></span>
+            <span class="nav-label">组件</span>
+          </button>
+          <button class="nav-item" data-view="doctor" type="button">
+            <span class="nav-glyph"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8h3l1.8-4.5L9.5 12l1.7-4h3.3"/></svg></span>
+            <span class="nav-label">诊断</span>
+            <span class="nav-pill nav-pill-warn" id="nav-problems" hidden>0</span>
+          </button>
+        </nav>
+
+        <div class="rail-foot">
+          <div class="foot-line"><span>平台</span><b id="platform-badge">—</b></div>
+          <div class="foot-line"><span>运行时</span><b id="runtime-mode">—</b></div>
+          <div class="foot-line"><span>Docker</span><b id="docker-status">—</b></div>
+          <div class="foot-line"><span>磁盘</span><b id="disk-usage">—</b></div>
+          <span class="badge-mock" id="mode-badge" hidden>MOCK 数据</span>
+        </div>
+      </aside>
+
+      <!-- 右侧：顶栏 + 视图 -->
+      <div class="main">
+        <header class="topbar">
+          <h1 class="view-title" id="view-title">概览</h1>
+          <div class="top-actions">
+            <div class="search" id="search-wrap" hidden>
+              <input id="search" type="search" placeholder="搜索组件…" autocomplete="off" />
+            </div>
+            <span class="live" id="live-summary"></span>
+            <button class="btn btn-primary" id="btn-new-instance" type="button" hidden>
+              新建实例
+            </button>
+          </div>
+        </header>
+
+        <section class="view" id="view-overview"></section>
+        <section class="view" id="view-instances" hidden></section>
+        <section class="view" id="view-catalog" hidden></section>
+        <section class="view" id="view-doctor" hidden></section>
+      </div>
+
+      <!-- 任务抽屉：默认只占一条，有任务时才展开。不再永久吃掉 168px -->
+      <footer class="drawer" id="drawer" data-open="0">
+        <button class="drawer-bar" id="drawer-bar" type="button">
+          <span class="drawer-summary" id="drawer-summary">暂无任务</span>
+          <span class="drawer-toggle" id="drawer-toggle">展开</span>
+        </button>
+        <div class="drawer-body" id="drawer-body"></div>
+      </footer>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

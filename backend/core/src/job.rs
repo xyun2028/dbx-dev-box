@@ -13,6 +13,8 @@ use std::fmt;
 pub enum Phase {
     Queued,
     Plan,
+    /// 拉取容器镜像。只有容器后端会经过这里，本机后端直接从 Plan 进 Download。
+    Pull,
     Download,
     Verify,
     Extract,
@@ -30,7 +32,12 @@ impl Phase {
     pub fn is_running(self) -> bool {
         matches!(
             self,
-            Phase::Plan | Phase::Download | Phase::Verify | Phase::Extract | Phase::Commit
+            Phase::Plan
+                | Phase::Pull
+                | Phase::Download
+                | Phase::Verify
+                | Phase::Extract
+                | Phase::Commit
         )
     }
 
@@ -41,7 +48,12 @@ impl Phase {
     pub fn cancellable(self) -> bool {
         matches!(
             self,
-            Phase::Queued | Phase::Plan | Phase::Download | Phase::Verify | Phase::Extract
+            Phase::Queued
+                | Phase::Plan
+                | Phase::Pull
+                | Phase::Download
+                | Phase::Verify
+                | Phase::Extract
         )
     }
 
@@ -49,6 +61,7 @@ impl Phase {
         match self {
             Phase::Queued => "queued",
             Phase::Plan => "plan",
+            Phase::Pull => "pull",
             Phase::Download => "download",
             Phase::Verify => "verify",
             Phase::Extract => "extract",
@@ -157,10 +170,15 @@ impl Job {
     fn allowed(from: Phase, to: Phase) -> bool {
         use Phase::*;
         match from {
-            Queued => matches!(to, Plan | Canceled),
-            Plan => matches!(to, Download | Failed | Canceled),
+            // 排队阶段也会失败：比如目录里没有这个组件、校验值是占位符。
+            // 这类失败发生在下载之前，属于"计划阶段就否定"，必须允许。
+            Queued => matches!(to, Plan | Failed | Canceled),
+            // 两条取物路径：本机走 Download，容器走 Pull
+            Plan => matches!(to, Pull | Download | Failed | Canceled),
+            Pull => matches!(to, Verify | Failed | Canceled),
             Download => matches!(to, Verify | Failed | Canceled),
-            Verify => matches!(to, Extract | Failed | Canceled),
+            // Verify → Commit 直达只在"无解压步骤"的后端成立（容器）
+            Verify => matches!(to, Extract | Commit | Failed | Canceled),
             Extract => matches!(to, Commit | Failed | Canceled),
             Commit => matches!(to, Ready | Failed),
             Ready | Failed | Canceled => false,
@@ -235,5 +253,45 @@ mod tests {
         j.fail("checksum mismatch").unwrap();
         assert_eq!(j.phase, Phase::Failed);
         assert_eq!(j.error.as_deref(), Some("checksum mismatch"));
+    }
+
+    #[test]
+    fn container_path_skips_extraction() {
+        // 容器后端：拉镜像 → 校验 digest → 直接创建容器，没有解压
+        let mut j = Job::new("j2", "mysql", "8.4.3");
+        for p in [Phase::Plan, Phase::Pull, Phase::Verify, Phase::Commit, Phase::Ready] {
+            j.advance(p).expect("container path should be legal");
+        }
+        assert_eq!(j.phase, Phase::Ready);
+    }
+
+    #[test]
+    fn cannot_mix_pull_and_download() {
+        // 一个任务只能有一条取物路径，混着来通常意味着后端判断错了
+        let mut j = Job::new("j3", "mysql", "8.4.3");
+        j.advance(Phase::Plan).unwrap();
+        j.advance(Phase::Download).unwrap();
+        assert!(j.advance(Phase::Pull).is_err());
+
+        let mut k = Job::new("j4", "mysql", "8.4.3");
+        k.advance(Phase::Plan).unwrap();
+        k.advance(Phase::Pull).unwrap();
+        assert!(k.advance(Phase::Download).is_err());
+    }
+
+    #[test]
+    fn queue_can_fail_before_start() {
+        let mut j = Job::new("j0", "jdk", "21");
+        j.fail("目录里没有这个组件").unwrap();
+        assert_eq!(j.phase, Phase::Failed);
+        assert_eq!(j.error.as_deref(), Some("目录里没有这个组件"));
+    }
+
+    #[test]
+    fn pull_is_cancellable() {
+        let mut j = Job::new("j5", "mysql", "8.4.3");
+        j.advance(Phase::Plan).unwrap();
+        j.advance(Phase::Pull).unwrap();
+        assert!(j.request_cancel(), "拉镜像可能要几分钟，必须能取消");
     }
 }

@@ -1,0 +1,201 @@
+# dev-box 组件配方
+#
+# 这份文件就是"扩展性"的落点：新增一个中间件 = 加一条记录，不改引擎。
+# M1 才会真正解析它；M0 阶段它同时充当 schema 说明和人工核对清单。
+#
+# 三条硬规则：
+# 1. sha256 必须钉死真实值。写 <REPLACE_ME> 的条目引擎会拒绝安装，
+#    这样占位符不会悄悄溜进正式版本。
+# 2. 每个平台的制品分开声明，缺哪个平台就在 UI 上显示"该平台不可用"，
+#    不要拿别的平台的包凑数。
+# 3. install 里只允许白名单步骤（render / copy / write-file / run / wait-port /
+#    http-probe / sql / driver）。没有 shell，没有任意脚本。
+
+schema: 1
+revision: "2026.10.27-m0"
+
+components:
+  - id: jdk
+    kind: toolchain
+    label: JDK
+    category: java
+    versions:
+      "21.0.5":
+        display: "Temurin 21.0.5+11"
+        artifacts:
+          windows-x64:
+            url: https://mirrors.example.com/temurin/21.0.5/jdk-21.0.5+11-windows-x64.zip
+            sha256: "<REPLACE_ME>"
+            size: 190000000
+            format: zip
+            strip_components: 1
+          darwin-arm64:
+            url: https://mirrors.example.com/temurin/21.0.5/jdk-21.0.5+11-macos-aarch64.tar.gz
+            sha256: "<REPLACE_ME>"
+            size: 195000000
+            format: tar.gz
+            strip_components: 1
+          linux-x64:
+            url: https://mirrors.example.com/temurin/21.0.5/jdk-21.0.5+11-linux-x64.tar.gz
+            sha256: "<REPLACE_ME>"
+            size: 198000000
+            format: tar.gz
+            strip_components: 1
+        provides:
+          binaries: [java, javac, jar, jlink]
+          env:
+            JAVA_HOME: "{{install_root}}"
+        health:
+          run: ["{{install_root}}/bin/java", "-version"]
+
+      "17.0.13":
+        display: "Temurin 17.0.13+11"
+        artifacts:
+          windows-x64:
+            url: https://mirrors.example.com/temurin/17.0.13/jdk-17.0.13+11-windows-x64.zip
+            sha256: "<REPLACE_ME>"
+            size: 185000000
+            format: zip
+            strip_components: 1
+          darwin-arm64:
+            url: https://mirrors.example.com/temurin/17.0.13/jdk-17.0.13+11-macos-aarch64.tar.gz
+            sha256: "<REPLACE_ME>"
+            size: 190000000
+            format: tar.gz
+            strip_components: 1
+          linux-x64:
+            url: https://mirrors.example.com/temurin/17.0.13/jdk-17.0.13+11-linux-x64.tar.gz
+            sha256: "<REPLACE_ME>"
+            size: 193000000
+            format: tar.gz
+            strip_components: 1
+        provides:
+          binaries: [java, javac, jar, jlink]
+          env:
+            JAVA_HOME: "{{install_root}}"
+
+  # maven 是第一条"被真正验过"的配方：sha512 取自官方 .sha512 文件，
+  # 已在 Windows 上跑通 下载 → 校验 → 解压 → 原子提交 → mvn -v。
+  # bin.zip 是三平台通用的分发形式（内含 mvn 与 mvn.cmd），这是上游的做法。
+  # 其余组件仍是 <REPLACE_ME>，引擎会直接拒绝——故意的，没验过就不许装。
+  - id: maven
+    kind: toolchain
+    label: Maven
+    category: java
+    versions:
+      "3.9.9":
+        display: "Apache Maven 3.9.9"
+        artifacts:
+          windows-x64:
+            url: https://repo.huaweicloud.com/apache/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip
+            sha512: "8beac8d11ef208f1e2a8df0682b9448a9a363d2ad13ca74af43705549e72e74c9378823bf689287801cbbfc2f6ea9596201d19ccacfdfb682ee8a2ff4c4418ba"
+            size: 9202456
+            format: zip
+            strip_components: 1
+          darwin-arm64:
+            url: https://repo.huaweicloud.com/apache/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip
+            sha512: "8beac8d11ef208f1e2a8df0682b9448a9a363d2ad13ca74af43705549e72e74c9378823bf689287801cbbfc2f6ea9596201d19ccacfdfb682ee8a2ff4c4418ba"
+            size: 9202456
+            format: zip
+            strip_components: 1
+          linux-x64:
+            url: https://repo.huaweicloud.com/apache/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.zip
+            sha512: "8beac8d11ef208f1e2a8df0682b9448a9a363d2ad13ca74af43705549e72e74c9378823bf689287801cbbfc2f6ea9596201d19ccacfdfb682ee8a2ff4c4418ba"
+            size: 9202456
+            format: zip
+            strip_components: 1
+        requires:
+          - { component: jdk, range: ">=8" }
+
+  - id: mysql
+    kind: service
+    label: MySQL
+    category: database
+    versions:
+      "8.4.3":
+        artifacts:
+          windows-x64:
+            url: https://mirrors.example.com/mysql/8.4.3/mysql-8.4.3-winx64.zip
+            sha256: "<REPLACE_ME>"
+            size: 245000000
+            format: zip
+            strip_components: 1
+          darwin-arm64:
+            url: https://mirrors.example.com/mysql/8.4.3/mysql-8.4.3-macos-arm64.tar.gz
+            sha256: "<REPLACE_ME>"
+            size: 260000000
+            format: tar.gz
+            strip_components: 1
+          linux-x64:
+            url: https://mirrors.example.com/mysql/8.4.3/mysql-8.4.3-linux-glibc2.28-x86_64.tar.xz
+            sha256: "<REPLACE_ME>"
+            size: 290000000
+            format: tar.xz
+            strip_components: 1
+        provides:
+          binaries: [mysql, mysqld, mysqladmin]
+          default_port: 3306
+        # 实例化时才渲染，变量取自 instance，不取 store
+        install:
+          - render:
+              from: assets/mysql/my.cnf.tmpl
+              to: "{{instance_root}}/my.cnf"
+              vars: [port, datadir, socket]
+          - driver:
+              name: mysql-initialize
+              args:
+                datadir: "{{datadir}}"
+                basedir: "{{install_root}}"
+        start:
+          argv:
+            - "{{install_root}}/bin/mysqld"
+            - "--defaults-file={{instance_root}}/my.cnf"
+        stop:
+          argv: ["{{install_root}}/bin/mysqladmin", "--defaults-file={{instance_root}}/my.cnf", "shutdown"]
+          timeout_secs: 30
+        health:
+          driver: mysql-handshake
+          tcp: { host: 127.0.0.1, port: "{{port}}", timeout: 60 }
+        uninstall:
+          keep: [data]
+
+  - id: nacos
+    kind: service
+    label: Nacos
+    category: middleware
+    versions:
+      "2.3.2":
+        artifacts:
+          windows-x64:
+            url: https://mirrors.example.com/nacos/2.3.2/nacos-server-2.3.2.zip
+            sha256: "<REPLACE_ME>"
+            size: 130000000
+            format: zip
+            strip_components: 1
+          darwin-arm64:
+            url: https://mirrors.example.com/nacos/2.3.2/nacos-server-2.3.2.tar.gz
+            sha256: "<REPLACE_ME>"
+            size: 128000000
+            format: tar.gz
+            strip_components: 1
+          linux-x64:
+            url: https://mirrors.example.com/nacos/2.3.2/nacos-server-2.3.2.tar.gz
+            sha256: "<REPLACE_ME>"
+            size: 128000000
+            format: tar.gz
+            strip_components: 1
+        # 安装期依赖：没有 JDK 就跑不起来，编排层要按拓扑顺序先装它
+        requires:
+          - { component: jdk, range: ">=17 <22" }
+        provides:
+          default_port: 8848
+        start:
+          argv:
+            - "{{jdk.home}}/bin/java"
+            - "-Dnacos.standalone=true"
+            - "-jar"
+            - "{{install_root}}/target/nacos-server.jar"
+        health:
+          http: { url: "http://127.0.0.1:{{port}}/nacos/v1/console/health/liveness", timeout: 120 }
+        uninstall:
+          keep: [data, logs]

@@ -1,0 +1,69 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 三平台并进的纪律：主分支任何一天不可构建就是红灯。
+# 四个目标从 M0 就固定下来，新增目标要同步更新 catalog 的平台声明。
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+            exe: devbox-sidecar.exe
+          # macOS 用 14（arm64）与 13（x64）各出一个，不要把 arm64 包发给 Intel 机器
+          - os: macos-14
+            target: darwin-arm64
+            exe: devbox-sidecar
+          - os: macos-13
+            target: darwin-x64
+            exe: devbox-sidecar
+          # 用 22.04 而不是 latest：latest 的 glibc 更新，老发行版跑不起来
+          - os: ubuntu-22.04
+            target: linux-x64
+            exe: devbox-sidecar
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test core
+        run: cargo test --manifest-path backend/core/Cargo.toml
+
+      - name: Build sidecar
+        run: cargo build --release --manifest-path backend/sidecar/Cargo.toml
+
+      - name: Stage package
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="dist/${{ matrix.target }}"
+          rm -rf "$out"
+          mkdir -p "$out/bin"
+          cp -r ui "$out/ui"
+          cp -r catalog "$out/catalog"
+          cp -r assets "$out/assets"
+          cp "backend/sidecar/target/release/${{ matrix.exe }}" "$out/bin/${{ matrix.exe }}"
+
+          # sidecar 可执行文件名要写进 manifest，按平台改写
+          node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('manifest.json', 'utf8'));
+            m.entrypoints.backend.executable = 'bin/${{ matrix.exe }}';
+            fs.writeFileSync('$out/manifest.json', JSON.stringify(m, null, 2) + '\n');
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dbx-plugin-${{ matrix.target }}
+          path: dist/${{ matrix.target }}
+          if-no-files-found: error

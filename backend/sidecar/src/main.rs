@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -19,6 +20,8 @@ use std::time::Duration;
 use devbox_core::job::{Job, Phase};
 use devbox_core::platform::PlatformKey;
 use devbox_core::CORE_VERSION;
+use devbox_engine::catalog::Catalog;
+use devbox_engine::{install, InstallSpec};
 use serde_json::{json, Value};
 
 type SharedWriter = Arc<Mutex<std::io::Stdout>>;
@@ -97,8 +100,19 @@ fn dispatch(
             let job = Job::new(job_id.clone(), component, version);
             jobs.lock().unwrap().insert(job_id.clone(), job);
 
-            // 异步：立刻返回 jobId，进度走事件。UI 刷新后凭 jobId 还能接上。
-            spawn_fake_install(job_id.clone(), jobs.clone(), out.clone());
+            // 有真实配方就走真实下载；没有（比如 MySQL 还没配镜像）就走演示路径。
+            // 这样 UI 的行为是一致的，只是数据真假不同。
+            match resolve_spec(component, version, platform) {
+                Ok(spec) => spawn_real_install(job_id.clone(), spec, jobs.clone(), out.clone()),
+                Err(message) => {
+                    // 开发时想走演示动画可以设 DEVBOX_FAKE=1；默认如实失败
+                    if std::env::var("DEVBOX_FAKE").as_deref() == Ok("1") {
+                        spawn_fake_install(job_id.clone(), jobs.clone(), out.clone());
+                    } else {
+                        spawn_catalog_failure(job_id.clone(), message, jobs.clone(), out.clone());
+                    }
+                }
+            }
             Ok(json!({ "jobId": job_id }))
         }
 
@@ -137,6 +151,171 @@ fn dispatch(
 
         other => Err((-32601, format!("method not found: {other}"))),
     }
+}
+
+/// 组件目录随插件包发布，所以按"包内相对路径"找：
+/// 1. `DEVBOX_CATALOG` 环境变量（开发/排障用）
+/// 2. 可执行文件旁边的 `../catalog/jdk.yaml`（.dbxp 解包后的布局）
+/// 3. 当前工作目录下的 `catalog/jdk.yaml`（源码里直接跑）
+fn catalog_path() -> Option<PathBuf> {
+    if let Ok(explicit) = std::env::var("DEVBOX_CATALOG") {
+        let path = PathBuf::from(explicit);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+        for candidate in [dir.join("../catalog/jdk.yaml"), dir.join("catalog/jdk.yaml")] {
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    let cwd = std::env::current_dir().ok()?.join("catalog/jdk.yaml");
+    cwd.is_file().then_some(cwd)
+}
+
+fn resolve_spec(
+    component: &str,
+    version: &str,
+    platform: PlatformKey,
+) -> Result<InstallSpec, String> {
+    let path = catalog_path().ok_or("未找到组件目录（catalog/jdk.yaml）")?;
+    let catalog = Catalog::from_file(&path).map_err(|e| e.to_string())?;
+    let mut spec = catalog
+        .install_spec(component, version, &platform.key())
+        .map_err(|e| e.to_string())?;
+    spec.mirrors = std::env::var("DEVBOX_MIRRORS")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(spec)
+}
+
+/// 目录里查不到 / 校验值是占位符，就直接失败，不假装在装。
+fn spawn_catalog_failure(job_id: String, message: String, jobs: JobTable, out: SharedWriter) {
+    thread::spawn(move || {
+        {
+            let mut guard = jobs.lock().unwrap();
+            if let Some(job) = guard.get_mut(&job_id) {
+                let _ = job.fail(message.clone());
+            }
+        }
+        emit_event(
+            &out,
+            "evt/job.progress",
+            json!({ "jobId": job_id, "phase": "failed", "percent": 0, "error": message }),
+        );
+    });
+}
+
+fn data_root() -> PathBuf {
+    std::env::var("DBX_PLUGIN_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("devbox-data"))
+}
+
+fn set_phase(jobs: &JobTable, out: &SharedWriter, job_id: &str, phase: Phase) {
+    let pct = {
+        let mut guard = jobs.lock().unwrap();
+        let Some(job) = guard.get_mut(job_id) else { return };
+        // 非法跳转直接忽略：说明引擎和状态机脱节了，宁可不动
+        if job.advance(phase).is_err() {
+            return;
+        }
+        job.percent()
+    };
+    emit_event(
+        out,
+        "evt/job.progress",
+        json!({ "jobId": job_id, "phase": phase.as_str(), "percent": pct }),
+    );
+}
+
+/// 真实安装：下载 → 换源降级 → 校验 → 解压 → 原子提交，全在引擎里。
+fn spawn_real_install(job_id: String, spec: InstallSpec, jobs: JobTable, out: SharedWriter) {
+    thread::spawn(move || {
+        let root = data_root();
+        set_phase(&jobs, &out, &job_id, Phase::Plan);
+        // 必须显式进 Download：否则后面 Plan -> Verify 是非法跳转，
+        // 状态机会静默忽略，job.get 永远停在 plan（这个坑踩过一次）
+        set_phase(&jobs, &out, &job_id, Phase::Download);
+
+        let j = jobs.clone();
+        let o = out.clone();
+        let id = job_id.clone();
+        let mut last_pct: i16 = -1;
+        let mut last_at = std::time::Instant::now();
+        let mut progress = move |done: u64, total: Option<u64>| {
+            let pct = {
+                let mut guard = j.lock().unwrap();
+                let Some(job) = guard.get_mut(&id) else { return };
+                job.set_progress(done, total.unwrap_or(done.max(1)));
+                job.percent()
+            };
+            // 每 8KB 一条事件会把桥接打爆（9MB 就是上千条）。只在百分比变化
+            // 或 1 秒心跳时推，慢速下载时仍有反馈。
+            let pct_i = pct as i16;
+            if pct_i == last_pct && last_at.elapsed().as_millis() < 1000 {
+                return;
+            }
+            last_pct = pct_i;
+            last_at = std::time::Instant::now();
+            emit_event(
+                &o,
+                "evt/job.progress",
+                json!({
+                    "jobId": id,
+                    "phase": "download",
+                    "percent": pct,
+                    "bytesDone": done,
+                    "bytesTotal": total,
+                }),
+            );
+        };
+
+        let result = install(&spec, &root, &mut progress);
+
+        match result {
+            Ok(outcome) => {
+                // 校验/解压/提交都很短，这里按顺序补齐阶段，UI 才能看到完整过程
+                for phase in [Phase::Verify, Phase::Extract, Phase::Commit, Phase::Ready] {
+                    set_phase(&jobs, &out, &job_id, phase);
+                }
+                emit_event(
+                    &out,
+                    "evt/job.progress",
+                    json!({
+                        "jobId": job_id,
+                        "phase": "ready",
+                        "percent": 100,
+                        "files": outcome.files,
+                        "bytes": outcome.bytes,
+                        "source": outcome.source,
+                        "path": outcome.path.display().to_string(),
+                    }),
+                );
+            }
+            Err(error) => {
+                {
+                    let mut guard = jobs.lock().unwrap();
+                    if let Some(job) = guard.get_mut(&job_id) {
+                        let _ = job.fail(error.to_string());
+                    }
+                }
+                emit_event(
+                    &out,
+                    "evt/job.progress",
+                    json!({ "jobId": job_id, "phase": "failed", "percent": 0, "error": error.to_string() }),
+                );
+            }
+        }
+    });
 }
 
 /// M0 假安装：按状态机走一遍并持续发进度事件。
