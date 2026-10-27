@@ -154,6 +154,59 @@ fn dispatch(
             }
         }
 
+        // 真实状态：磁盘占用、计数、目录路径。界面不再自己编。
+        "devbox/state" => {
+            let root = data_root();
+            let (total, by_component) = store_usage(&root);
+            let catalog = catalog_path().and_then(|p| Catalog::from_file(&p).ok());
+            let (revision, comp_count, unverified) = match &catalog {
+                Some(c) => (
+                    c.revision.clone(),
+                    c.components.len(),
+                    c.components
+                        .iter()
+                        .map(|comp| {
+                            comp.versions
+                                .keys()
+                                .filter(|v| c.install_spec(&comp.id, v, &platform.key()).is_err())
+                                .count()
+                        })
+                        .sum::<usize>(),
+                ),
+                None => (String::new(), 0, 0),
+            };
+            let mut installed_count = 0usize;
+            let mut active_count = 0usize;
+            if let Some(c) = &catalog {
+                for comp in &c.components {
+                    installed_count += installed_versions(&root, &comp.id, &platform.key()).len();
+                    if devbox_engine::current(&root, &comp.id).is_some() {
+                        active_count += 1;
+                    }
+                }
+            }
+            Ok(json!({
+                "data": root.display().to_string(),
+                "paths": {
+                    "store": root.join("store").display().to_string(),
+                    "current": root.join("current").display().to_string(),
+                    "bin": root.join("bin").display().to_string(),
+                },
+                "store": { "totalBytes": total, "byComponent": by_component },
+                "counts": {
+                    "installed": installed_count,
+                    "active": active_count,
+                    "shims": count_shims(&root),
+                },
+                "catalog": { "revision": revision, "components": comp_count, "unverified": unverified },
+                "docker": { "available": in_path("docker"), "version": Value::Null },
+                "persist": "not-implemented",
+            }))
+        }
+
+        // 诊断：只报告事实，不自动修
+        "devbox/doctor" => Ok(json!({ "checks": doctor_checks(&data_root(), platform) })),
+
         "devbox/job.get" => {
             let job_id = params
                 .get("jobId")
@@ -189,6 +242,167 @@ fn dispatch(
 
         other => Err((-32601, format!("method not found: {other}"))),
     }
+}
+
+/// 统计 store 下每个组件的占用（字节）。
+fn store_usage(root: &std::path::Path) -> (u64, std::collections::BTreeMap<String, u64>) {
+    let mut total = 0u64;
+    let mut by = std::collections::BTreeMap::new();
+    let Ok(components) = std::fs::read_dir(root.join("store")) else {
+        return (0, by);
+    };
+    for component in components.flatten() {
+        let name = component.file_name().to_string_lossy().to_string();
+        let mut size = 0u64;
+        if let Ok(versions) = std::fs::read_dir(component.path()) {
+            for version in versions.flatten() {
+                if let Ok(platforms) = std::fs::read_dir(version.path()) {
+                    for platform in platforms.flatten() {
+                        size += dir_size(&platform.path());
+                    }
+                }
+            }
+        }
+        total += size;
+        by.insert(name, size);
+    }
+    (total, by)
+}
+
+fn dir_size(path: &std::path::Path) -> u64 {
+    let mut total = 0u64;
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        match entry.file_type() {
+            Ok(ft) if ft.is_dir() => total += dir_size(&entry.path()),
+            Ok(_) => total += entry.metadata().map(|m| m.len()).unwrap_or(0),
+            Err(_) => {}
+        }
+    }
+    total
+}
+
+fn in_path(exe: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        dir.join(exe).is_file() || dir.join(format!("{exe}.exe")).is_file()
+    })
+}
+
+fn doctor_checks(
+    root: &std::path::Path,
+    platform: PlatformKey,
+) -> Vec<Value> {
+    let mut checks: Vec<Value> = Vec::new();
+
+    // 1) 目录能否解析
+    match catalog_path().and_then(|p| Catalog::from_file(&p).ok()) {
+        Some(catalog) => {
+            let placeholders: Vec<String> = catalog
+                .components
+                .iter()
+                .flat_map(|c| {
+                    c.versions
+                        .keys()
+                        .filter(|v| catalog.install_spec(&c.id, v, &platform.key()).is_err())
+                        .map(move |v| format!("{} {}", c.id, v))
+                })
+                .collect();
+            checks.push(json!({
+                "id": "catalog",
+                "level": "ok",
+                "title": "组件目录可解析",
+                "detail": format!("rev {} · {} 个组件", catalog.revision, catalog.components.len()),
+            }));
+            if !placeholders.is_empty() {
+                checks.push(json!({
+                    "id": "recipes-unverified",
+                    "level": "warn",
+                    "title": format!("{} 个配方还没验过", placeholders.len()),
+                    "detail": format!("校验值仍是占位符，安装会被拒绝：{}", placeholders.join("、")),
+                    "fix": "拿到上游 .sha256/.sha512 后填进 catalog/jdk.yaml",
+                }));
+            }
+        }
+        None => checks.push(json!({
+            "id": "catalog",
+            "level": "error",
+            "title": "找不到或无法解析组件目录",
+            "detail": "catalog/jdk.yaml 缺失或格式错误",
+            "fix": "确认包内 catalog 目录存在，且 proxy 平台字段正确",
+        })),
+    }
+
+    // 2) 数据目录可写
+    let probe = root.join(".write-probe");
+    let writable = std::fs::create_dir_all(root).is_ok()
+        && std::fs::write(&probe, b"ok").is_ok()
+        && std::fs::remove_file(&probe).is_ok();
+    checks.push(json!({
+        "id": "store-writable",
+        "level": if writable { "ok" } else { "error" },
+        "title": if writable { "数据目录可写" } else { "数据目录不可写" },
+        "detail": root.display().to_string(),
+        "fix": if writable { Value::Null } else { json!("检查目录权限，或换一个数据目录") },
+    }));
+
+    // 3) 入口是否覆盖了全部已激活组件
+    let active: Vec<String> = match catalog_path().and_then(|p| Catalog::from_file(&p).ok()) {
+        Some(c) => c
+            .components
+            .iter()
+            .filter(|comp| devbox_engine::current(root, &comp.id).is_some())
+            .map(|comp| comp.id.clone())
+            .collect(),
+        None => Vec::new(),
+    };
+    let shims = count_shims(root);
+    if active.is_empty() {
+        checks.push(json!({
+            "id": "shims",
+            "level": "info",
+            "title": "还没有激活任何组件",
+            "detail": "激活一个版本后会生成命令行入口",
+        }));
+    } else if shims == 0 {
+        checks.push(json!({
+            "id": "shims",
+            "level": "warn",
+            "title": "已激活但没有命令行入口",
+            "detail": format!("{} 个组件处于激活状态，$DATA/bin 是空的", active.len()),
+            "fix": "重新切换一次版本，或运行 devbox-shim",
+        }));
+    } else {
+        checks.push(json!({
+            "id": "shims",
+            "level": "ok",
+            "title": format!("命令行入口 {shims} 个"),
+            "detail": format!("覆盖已激活组件：{}", active.join("、")),
+        }));
+    }
+
+    // 4) 容器后端是否可用（M2 才用到，先如实报告）
+    let docker = in_path("docker");
+    checks.push(json!({
+        "id": "docker",
+        "level": if docker { "ok" } else { "info" },
+        "title": if docker { "检测到 docker 可执行文件" } else { "未检测到 docker" },
+        "detail": if docker { "容器后端仍计划中，尚未调用" } else { "服务类组件目前没有可用的本机分发，容器是后续方向" },
+    }));
+
+    // 5) 服务实例：明确未实现，不留假状态
+    checks.push(json!({
+        "id": "instances",
+        "level": "info",
+        "title": "服务实例尚未实现",
+        "detail": "MySQL / Redis 等需要实例启停与探活，属于下一阶段",
+    }));
+
+    checks
 }
 
 /// 刷新 `$DATA/bin` 里的命令行入口，返回生成的个数。

@@ -40,6 +40,7 @@ Design document: [`docs/plugin-architecture.md`](./docs/plugin-architecture.md) 
 | Verified recipes | **Maven 3.9.9 / 3.8.8**, **Node.js 22.11.0** — everything else is still a placeholder |
 | Version switching | **Working**: `current/<component>` link flips between installed versions in milliseconds |
 | PATH integration | **Working**: `$DATA/bin` holds shims that forward through `current/`, so switching versions needs no PATH change |
+| Console | Follows the host theme; every number comes from the sidecar, nothing is faked |
 | Dependency resolution | Logic + tests done, not yet wired into the install flow |
 | Container (Docker) backend | Planning only — no `docker` calls yet |
 | Persistence (`detached` / `autostart`) | Not implemented (needs daemon mode) |

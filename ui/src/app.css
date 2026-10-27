@@ -8,13 +8,14 @@
 
 :root {
   color-scheme: dark;
-  --bg: #0f1114;
-  --bg-panel: #15181c;
-  --bg-elev: #1b1f24;
-  --bg-hover: #22272e;
-  --bg-inset: #0c0e11;
-  --line: #252a31;
-  --line-strong: #333a43;
+  /* 取值对齐宿主深色面板：中灰而非纯黑，避免嵌在 DBX 里像一块洞 */
+  --bg: #1d2126;
+  --bg-panel: #23272d;
+  --bg-elev: #282d33;
+  --bg-hover: #2f353c;
+  --bg-inset: #191d22;
+  --line: #2f363d;
+  --line-strong: #3c444d;
   --text: #e4e7eb;
   --text-dim: #9aa4b0;
   --text-faint: #6c7683;
@@ -503,6 +504,44 @@ h1, h2, h3, p { margin: 0; }
 .problem-tag[data-level="warn"] { background: var(--warn-soft); color: var(--warn); }
 .problem-tag[data-level="error"] { background: var(--err-soft); color: var(--err); }
 .problem-tag[data-level="info"] { background: var(--accent-soft); color: var(--accent); }
+.problem-tag[data-level="ok"] { background: var(--ok-soft); color: var(--ok); }
+
+.boot-error {
+  position: fixed;
+  inset: 24px;
+  z-index: 99;
+  overflow: auto;
+  padding: 18px 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--err);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow);
+}
+.boot-error pre {
+  margin: 8px 0;
+  font: 11.5px/1.6 var(--mono);
+  color: var(--err);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ============================== 说明块 ============================== */
+
+/* 用于"这个功能还没实现"的直白说明：不摆假数据，也不能是一句空话 */
+.notice { padding: 16px 18px; }
+.notice-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.notice p {
+  margin: 6px 0;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--text-dim);
+}
+.notice p.faint { color: var(--text-faint); }
 
 /* ============================== 任务抽屉 ============================== */
 

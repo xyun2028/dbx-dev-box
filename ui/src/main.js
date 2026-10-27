@@ -40,9 +40,10 @@ const state = {
   mode: "mock",
   platform: "windows-x64",
   runtime: "—",
-  disk: { usedGb: 12.4, totalGb: 80 },
-  // 容器是可选后端：不可用时只提示原因，不隐藏功能
-  docker: { available: true, version: "27.3.1" },
+  // 真实状态来自 devbox/state，不再由界面编造
+  info: null,
+  checks: [],
+  theme: "dark",
   query: "",
   filter: "all",
   revision: "",
@@ -54,43 +55,6 @@ const state = {
   jobs: new Map(),
   drawerOpen: false,
 
-  packs: [
-    {
-      id: "java-backend",
-      name: "Java 后端全家桶",
-      desc: "一套能直接跑 Spring Boot 的本地环境，含依赖自动编排",
-      size: "约 1.1 GB",
-      items: [
-        { label: "JDK 17", installed: true },
-        { label: "Maven 3.9.9", installed: true },
-        { label: "MySQL 8.4", installed: false },
-        { label: "Redis 7.4", installed: false },
-        { label: "Nacos 2.3", installed: false },
-      ],
-    },
-    {
-      id: "data-only",
-      name: "只要数据库",
-      desc: "不碰工具链，只把开发库和缓存拉起来",
-      size: "约 620 MB",
-      items: [
-        { label: "MySQL 8.4", installed: false },
-        { label: "Redis 7.4", installed: false },
-      ],
-    },
-    {
-      id: "middleware",
-      name: "中间件一套",
-      desc: "注册中心、调度、消息队列，依赖的 JDK 会自动先装",
-      size: "约 780 MB",
-      items: [
-        { label: "Nacos 2.3", installed: false },
-        { label: "xxl-job 2.4", installed: false },
-        { label: "RocketMQ 5.3", installed: false },
-      ],
-    },
-  ],
-
   // 与 catalog/jdk.yaml 保持一致：只有 maven 有真实校验值。
   // 演示数据也不许比真实情况"多能给"，否则截图和产品会对不上。
   components: [
@@ -101,18 +65,8 @@ const state = {
     { id: "nacos", label: "Nacos", kind: "service", category: "middleware", desc: "注册中心与配置中心，依赖 JDK 17+，自动先装", versions: ["2.3.2"], installed: [], unverified: ["2.3.2"], sizeMb: 130, docker: true, requires: [{ component: "jdk", range: ">=17 <22" }] },
   ],
 
-  instances: [
-    { id: "mysql-dev", name: "mysql-dev", component: "MySQL", version: "8.4.3", port: 3306, status: "running", persist: "detached", runtime: "native", uptime: "3h 12m", logs: ["[12:04:11] ready for connections", "[12:04:11] port: 3306, socket: /tmp/mysql.sock", "[11:58:02] mysqld: starting 8.4.3"] },
-    { id: "nacos-dev", name: "nacos-dev", component: "Nacos", version: "2.3.2", port: 8848, status: "degraded", persist: "session", runtime: "docker", uptime: "0h 04m", logs: ["[12:08:40] health check failed (3/3)", "[12:08:10] java: unsupported class file version", "[12:08:02] container devbox-nacos-dev started"] },
-    { id: "redis-dev", name: "redis-dev", component: "Redis", version: "7.4.1", port: 6379, status: "running", persist: "autostart", runtime: "docker", uptime: "6h 41m", logs: ["[05:27:09] Ready to accept connections tcp", "[05:27:08] container devbox-redis-dev started"] },
-    { id: "mysql-legacy", name: "mysql-57-legacy", component: "MySQL", version: "5.7.44", port: 3307, status: "stopped", persist: "autostart", runtime: "native", uptime: "—", logs: [] },
-  ],
+  instances: [],
 
-  problems: [
-    { level: "error", title: "nacos-dev 健康检查连续 3 次未通过", fix: "日志提示 class file 版本不支持：把 Nacos 关联的 JDK 切到 17 以上再重启。当前激活的是 JDK 21，检查是否被项目级覆盖成了 8。" },
-    { level: "warn", title: "Redis 在 windows-x64 上没有可用制品", fix: "官方不提供 Windows 发行版。可以改用 Memurai，或在 Linux/macOS 上安装，或走容器。这里不会拿其他平台的包凑数。" },
-    { level: "info", title: "3307 端口被非 dev-box 进程占用", fix: "mysql-57-legacy 配置的端口当前被 PID 8124 占用。启动前请改端口，或确认该进程是否还需要保留。" },
-  ],
 };
 
 // ------------------------------------------------------------------ 宿主桥接
@@ -157,6 +111,49 @@ async function connectHost() {
         };
         setTimeout(tick, 200);
         return { jobId };
+      }
+      if (method === "devbox/state") {
+        const byComponent = {};
+        let total = 0;
+        let installed = 0;
+        for (const c of state.components) {
+          for (const _v of c.installed ?? []) {
+            const bytes = (c.sizeMb ?? 0) * 1048576;
+            byComponent[c.id] = (byComponent[c.id] ?? 0) + bytes;
+            total += bytes;
+            installed += 1;
+          }
+        }
+        const active = state.components.filter((c) => c.active).length;
+        return {
+          data: "<mock-data>",
+          paths: { store: "<mock-data>/store", current: "<mock-data>/current", bin: "<mock-data>/bin" },
+          store: { totalBytes: total, byComponent },
+          counts: { installed, active, shims: active * 2 },
+          catalog: {
+            revision: "2026.10.27-m0 (mock)",
+            components: state.components.length,
+            unverified: state.components.reduce((n, c) => n + (c.unverified?.length ?? 0), 0),
+          },
+          docker: { available: false, version: null },
+          persist: "not-implemented",
+        };
+      }
+      if (method === "devbox/doctor") {
+        const unv = state.components.reduce((n, c) => n + (c.unverified?.length ?? 0), 0);
+        const active = state.components.filter((c) => c.active);
+        return {
+          checks: [
+            { id: "catalog", level: "ok", title: "组件目录可解析", detail: `rev 2026.10.27-m0 (mock) · ${state.components.length} 个组件` },
+            ...(unv ? [{ id: "recipes-unverified", level: "warn", title: `${unv} 个配方还没验过`, detail: "校验值仍是占位符，安装会被拒绝", fix: "拿到上游 .sha256/.sha512 后填进 catalog/jdk.yaml" }] : []),
+            { id: "store-writable", level: "ok", title: "数据目录可写", detail: "<mock-data>" },
+            active.length
+              ? { id: "shims", level: "ok", title: `命令行入口 ${active.length * 2} 个`, detail: `覆盖已激活组件：${active.map((c) => c.label).join("、")}` }
+              : { id: "shims", level: "info", title: "还没有激活任何组件", detail: "激活一个版本后会生成命令行入口" },
+            { id: "docker", level: "info", title: "未检测到 docker", detail: "容器后端仍计划中，尚未调用" },
+            { id: "instances", level: "info", title: "服务实例尚未实现", detail: "MySQL / Redis 等需要实例启停与探活，属于下一阶段" },
+          ],
+        };
       }
       if (method === "devbox/activate") {
         const c = state.components.find((x) => x.id === params.component);
@@ -331,6 +328,25 @@ function createInstance(form) {
   );
 }
 
+// ------------------------------------------------------------------ 主题
+
+// 宿主的主题只有 window.dbxPlugin.theme 这一个入口（字符串或函数）。
+// 没有宿主时退回系统配色，而不是永远深色——否则亮色系统里会突然一块黑。
+function applyTheme() {
+  let mode = null;
+  try {
+    let t = window.dbxPlugin?.theme;
+    if (typeof t === "function") t = t();
+    if (t === "dark" || t === "light") mode = t;
+    else if (t && typeof t === "object" && (t.mode === "dark" || t.mode === "light")) mode = t.mode;
+  } catch (_) {}
+  if (!mode) {
+    mode = window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  }
+  state.theme = mode;
+  document.documentElement.dataset.theme = mode;
+}
+
 // ------------------------------------------------------------------ 渲染
 
 function runningCount() {
@@ -341,6 +357,7 @@ function activeJobs() {
 }
 
 function render() {
+  applyTheme();
   document.querySelectorAll(".nav-item").forEach((b) =>
     b.setAttribute("aria-current", String(b.dataset.view === state.view))
   );
@@ -348,19 +365,24 @@ function render() {
   $("view-title").textContent = titles[state.view];
   for (const v of Object.keys(titles)) $(`view-${v}`).hidden = v !== state.view;
   $("search-wrap").hidden = state.view !== "catalog";
-  $("btn-new-instance").hidden = state.view !== "instances";
+  $("btn-new-instance").hidden = true; // 服务实例尚未实现，不摆一个点了会失败的入口
 
-  const running = runningCount();
-  $("nav-running").textContent = String(running);
-  $("nav-running").dataset.live = running > 0 ? "1" : "0";
-  $("nav-problems").hidden = state.problems.length === 0;
-  $("nav-problems").textContent = String(state.problems.length);
-  $("live-summary").innerHTML = `<b>${running}</b> 个服务运行中`;
+  const counts = state.info?.counts ?? { installed: 0, active: 0, shims: 0 };
+  const troubled = state.checks.filter((c) => c.level === "error" || c.level === "warn").length;
+
+  // 这个徽标属于"服务实例"，不是"已激活组件"——语义不能混
+  $("nav-running").textContent = "0";
+  $("nav-running").hidden = true;
+  $("nav-problems").hidden = troubled === 0;
+  $("nav-problems").textContent = String(troubled);
+  $("live-summary").innerHTML = `<b>${counts.installed}</b> 个版本 · <b>${counts.active}</b> 个激活`;
   $("platform-badge").textContent = state.platform;
   $("runtime-mode").textContent = state.runtime;
-  $("docker-status").textContent = state.docker.available ? state.docker.version : "未检测到";
-  $("docker-status").style.color = state.docker.available ? "" : "var(--warn)";
-  $("disk-usage").textContent = `${state.disk.usedGb} GB`;
+
+  const dockerOn = state.info?.docker?.available;
+  $("docker-status").textContent = state.info ? (dockerOn ? "已检测到" : "未检测到") : "—";
+  $("docker-status").style.color = dockerOn ? "" : "var(--warn)";
+  $("disk-usage").textContent = state.info ? fmtBytes(state.info.store.totalBytes) : "—";
 
   if (state.view === "overview") renderOverview();
   if (state.view === "instances") renderInstances();
@@ -369,78 +391,75 @@ function render() {
   renderDrawer();
 }
 
+function fmtBytes(n) {
+  if (!n) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${i === 0 || v >= 10 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
 function renderOverview() {
-  const installedCount = state.components.reduce((n, c) => n + c.installed.length, 0);
-  const chains = state.components.filter((c) => c.kind === "toolchain" && c.installed.length > 0);
+  const counts = state.info?.counts ?? { installed: 0, active: 0, shims: 0 };
+  const chains = state.components.filter(
+    (c) => c.kind === "toolchain" && (c.installed ?? []).length > 0
+  );
+  const activeNames = state.components.filter((c) => c.active).map((c) => c.label);
+  const installedBytes = state.info?.store?.totalBytes ?? 0;
 
   $("view-overview").innerHTML = `
     <div class="kpi-grid">
-      ${kpi("运行中的服务", runningCount(), `共 ${state.instances.length} 个实例`, "ok", `/ ${state.instances.length}`)}
-      ${kpi("已安装版本", installedCount, "只读制品，删版本不动数据", "", " 个")}
-      ${kpi("磁盘占用", state.disk.usedGb, `配额 ${state.disk.totalGb} GB，下载前预检空间`, "", " GB")}
-      ${kpi("进行中的任务", activeJobs().length, activeJobs().length ? "关掉面板也不会中断" : "没有排队的工作", activeJobs().length ? "warn" : "", " 个")}
+      ${kpi("已安装版本", counts.installed, "只读制品，切版本不动数据", "", " 个")}
+      ${kpi("已激活", counts.active, activeNames.length ? activeNames.join(" / ") : "还没有激活任何组件", counts.active ? "ok" : "", " 个")}
+      ${kpi("命令行入口", counts.shims, counts.shims ? "经由 current/ 转发，切版本不用改 PATH" : "激活版本后自动生成", "", " 个")}
+      ${kpi("磁盘占用", fmtBytes(installedBytes), "store 目录合计", "", "")}
     </div>
-
-    <section class="section">
-      <div class="section-head">
-        <h2 class="section-title">一键环境</h2>
-        <span class="section-note">按依赖拓扑安装，缺少的 JDK 会自动先装</span>
-      </div>
-      <div class="packs">
-        ${state.packs.map((p) => {
-          const missing = p.items.filter((i) => !i.installed).length;
-          return `
-          <div class="pack">
-            <h3 class="pack-name">${esc(p.name)}</h3>
-            <p class="pack-desc">${esc(p.desc)}</p>
-            <div class="pack-items">
-              ${p.items.map((i) => `<span class="chip ${i.installed ? "chip-ok" : ""}">${esc(i.label)}</span>`).join("")}
-            </div>
-            <div class="pack-foot">
-              <span class="pack-size">${esc(p.size)} · 待装 ${missing}</span>
-              <button class="btn btn-sm ${missing ? "btn-primary" : ""}" data-action="run-pack" data-id="${p.id}">
-                ${missing ? "拉起环境" : "已就绪"}
-              </button>
-            </div>
-          </div>`;
-        }).join("")}
-      </div>
-    </section>
 
     <section class="section">
       <div class="section-head">
         <h2 class="section-title">工具链</h2>
         <span class="section-note">切换只改激活指针，已装版本无需重新下载</span>
+        <button class="btn-link section-more" data-action="goto" data-id="catalog">查看全部组件 →</button>
       </div>
-      <div class="chains">
-        ${chains.map((c) => `
-          <div class="chain">
-            <div>
-              <div class="chain-name">${esc(c.label)}</div>
-              <div class="chain-meta">${c.installed.length} 个版本 · PATH 生效</div>
-            </div>
-            <div class="chain-right">
-              <select class="select" data-change="activate" data-id="${c.id}" aria-label="${esc(c.label)} 当前版本">
-                ${c.versions.map((v) => `<option value="${v}" ${v === c.active ? "selected" : ""}>${v}</option>`).join("")}
-              </select>
-            </div>
-          </div>`).join("")}
-      </div>
-      ${state.shims > 0
-        ? `<p class="path-hint">命令行入口已生成 ${state.shims} 个：<code>${esc(state.shimDir)}</code> —— 把这一层加进 PATH 后，${state.components
-            .filter((c) => c.active)
-            .map((c) => c.label)
-            .join(" / ")} 就能直接在终端里用；切换版本不需要重新配置。</p>`
-        : `<p class="path-hint">还没有生成命令行入口。给某个组件选一个版本后，这里会出现 $DATA/bin 的路径。</p>`}
+      ${chains.length === 0
+        ? `<div class="panel notice">
+             <div class="notice-title">还没有装任何工具链</div>
+             <p>去「组件」里选一个版本安装。装完会自动激活并生成命令行入口。</p>
+           </div>`
+        : `<div class="chains">
+            ${chains.map((c) => `
+              <div class="chain">
+                <div>
+                  <div class="chain-name">${esc(c.label)}</div>
+                  <div class="chain-meta">${(c.installed ?? []).length} 个版本 · 当前 ${esc(c.active ?? "未激活")}</div>
+                </div>
+                <div class="chain-right">
+                  <select class="select" data-change="activate" data-id="${c.id}" aria-label="${esc(c.label)} 当前版本">
+                    ${(c.installed ?? []).map((v) => `<option value="${v}" ${v === c.active ? "selected" : ""}>${v}</option>`).join("")}
+                  </select>
+                </div>
+              </div>`).join("")}
+          </div>`}
+      ${counts.shims > 0
+        ? `<p class="path-hint">命令行入口 ${counts.shims} 个：<code>${esc(state.shimDir || "…")}</code> —— 把这一层加进 PATH 后，${activeNames.join(" / ")} 就能直接在终端里用；切换版本不需要重新配置。</p>`
+        : `<p class="path-hint">还没有生成命令行入口。装好并激活一个组件后，这里会出现 $DATA/bin 的路径。</p>`}
     </section>
 
     <section class="section">
       <div class="section-head">
         <h2 class="section-title">服务</h2>
-        <span class="section-note">端口与健康状态一眼可见</span>
-        <button class="btn-link section-more" data-action="goto" data-id="instances">管理全部实例 →</button>
+        <span class="section-note">还没实现，不假装有</span>
       </div>
-      <div class="panel">${serviceTable(state.instances.slice(0, 4), false)}</div>
+      <div class="panel notice">
+        <div class="notice-title">MySQL / Redis 这类服务目前无法启动</div>
+        <p>已经能用的：下载 → 校验 → 安全解压 → 版本激活 → 命令行入口。</p>
+        <p>还缺的：实例模型（独立数据目录 / 端口 / 配置渲染）、进程启停与健康检查、常驻三态。
+           这些属于 M2，做之前不会在界面上摆出「运行中的实例」。</p>
+      </div>
     </section>`;
 }
 
@@ -494,89 +513,42 @@ const DEFAULT_PORT = { mysql: 3306, redis: 6379, nginx: 80, nacos: 8848, rocketm
 
 function renderInstances() {
   const services = state.components.filter((c) => c.kind === "service");
-  const pre = state.newPrefill;
-  const initialId = pre?.component && services.some((s) => s.id === pre.component) ? pre.component : services[0].id;
-  const initial = state.components.find((c) => c.id === initialId);
 
   $("view-instances").innerHTML = `
-    ${state.showNewInstance ? `
-      <div class="panel">
-        <form class="form" id="new-instance-form">
-          <div class="field">
-            <label>组件</label>
-            <select class="select" name="component" id="ni-component">
-              ${services.map((c) => `<option value="${c.id}" ${c.id === initialId ? "selected" : ""}>${esc(c.label)}</option>`).join("")}
-            </select>
-          </div>
-          <div class="field">
-            <label>版本</label>
-            <select class="select" name="version" id="ni-version"></select>
-          </div>
-          <div class="field">
-            <label>运行方式</label>
-            <select class="select" name="runtime" id="ni-runtime">
-              <option value="native">本机进程</option>
-              <option value="docker">容器</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>实例名</label>
-            <input class="input" name="name" placeholder="${initialId}-dev" />
-          </div>
-          <div class="field">
-            <label>端口</label>
-            <input class="input mono" name="port" id="ni-port" type="number" value="${DEFAULT_PORT[initialId] ?? 8080}" />
-          </div>
-          <div class="field">
-            <label>常驻方式</label>
-            <select class="select" name="persist">
-              <option value="session">随 DBX 退出停止</option>
-              <option value="detached">常驻后台</option>
-              <option value="autostart">开机自启</option>
-            </select>
-          </div>
-          <div class="field" id="ni-volume-field">
-            <label>数据位置</label>
-            <select class="select" name="volume" id="ni-volume">
-              <option value="bind">挂载到实例目录</option>
-              <option value="volume">Docker 卷（更快）</option>
-            </select>
-          </div>
-          <p class="form-note" id="ni-hint"></p>
-          <p class="form-note">
-            数据、配置、日志都放在独立实例目录里；删除组件版本不会碰这里的数据。
-            端口冲突会在创建时直接报出来，不会偷偷换端口。
-            运行方式创建后不可更改，要换只能新建实例再导数据。
-          </p>
-          <div class="form-actions">
-            <button class="btn btn-ghost" type="button" data-action="new-cancel">取消</button>
-            <button class="btn btn-primary" type="submit">创建实例</button>
-          </div>
-        </form>
-      </div>` : ""}
+    <div class="panel notice">
+      <div class="notice-title">服务实例还没实现</div>
+      <p>这里现在不会出现任何「运行中」的实例——因为还没有能力真的把它们跑起来。</p>
+      <p>下一阶段（M2）要做的是：实例模型、端口分配、配置渲染、进程启停与探活、常驻三态。
+         在那些做完之前，这个页面只列组件声明，不摆假状态。</p>
+    </div>
+
     <section class="section">
       <div class="section-head">
-        <h2 class="section-title">全部实例</h2>
-        <span class="section-note">${state.instances.length} 个 · 本机与容器实例共用同一张表</span>
+        <h2 class="section-title">服务类组件</h2>
+        <span class="section-note">来自组件目录的声明，仅此而已</span>
       </div>
-      <div class="panel">${serviceTable(state.instances, true)}</div>
+      <div class="panel">
+        <table class="table">
+          <thead><tr>
+            <th>组件</th><th>目录里的版本</th><th class="col-optional">校验</th><th class="col-optional">容器</th><th>实例能力</th>
+          </tr></thead>
+          <tbody>
+            ${services.length === 0
+              ? `<tr><td colspan="5" class="dim">目录里没有服务类组件</td></tr>`
+              : services.map((c) => `
+                <tr>
+                  <td><div class="svc-name">${esc(c.label)}</div></td>
+                  <td><span class="mono dim">${(c.versions ?? []).join(" / ")}</span></td>
+                  <td class="col-optional">${(c.unverified ?? []).length === (c.versions ?? []).length
+                    ? `<span class="chip chip-warn">未验证</span>`
+                    : `<span class="chip chip-ok">已校验</span>`}</td>
+                  <td class="col-optional">${c.docker ? `<span class="chip chip-docker">可用</span>` : `<span class="faint">—</span>`}</td>
+                  <td><span class="faint">未实现</span></td>
+                </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
     </section>`;
-
-  if (state.showNewInstance) {
-    syncVersionOptions(pre?.version);
-    $("ni-component").addEventListener("change", () => {
-      const c = state.components.find((x) => x.id === $("ni-component").value);
-      $("ni-port").value = DEFAULT_PORT[c.id] ?? 8080;
-      syncVersionOptions();
-    });
-    $("ni-runtime").addEventListener("change", () => updateRuntimeHint());
-    $("ni-volume").addEventListener("change", () => updateRuntimeHint());
-    $("ni-port").addEventListener("input", () => updateRuntimeHint());
-    $("new-instance-form").addEventListener("submit", (e) => {
-      e.preventDefault();
-      createInstance(e.currentTarget);
-    });
-  }
 }
 
 function syncVersionOptions(preselect) {
@@ -721,31 +693,38 @@ function renderCatalog() {
 }
 
 function renderDoctor() {
+  const checks = state.checks;
+  const errors = checks.filter((c) => c.level === "error").length;
+  const warns = checks.filter((c) => c.level === "warn").length;
+  const LABEL = { ok: "OK", warn: "WARN", error: "ERR", info: "INFO" };
+
   $("view-doctor").innerHTML = `
     <section class="section">
       <div class="section-head">
-        <h2 class="section-title">发现 ${state.problems.length} 个需要处理的问题</h2>
-        <span class="section-note">只报告，不自动修复</span>
+        <h2 class="section-title">${checks.length} 项检查 · ${errors} 个错误 · ${warns} 个提醒</h2>
+        <span class="section-note">只报告事实，不自动修复</span>
       </div>
       <div class="panel">
-        ${state.problems.map((p) => `
-          <div class="problem">
-            <span class="problem-tag" data-level="${p.level}">${p.level.toUpperCase()}</span>
-            <div class="problem-body">
-              <div class="problem-title">${esc(p.title)}</div>
-              <div class="problem-fix">${esc(p.fix)}</div>
-            </div>
-          </div>`).join("")}
+        ${checks.length === 0
+          ? `<div class="problem"><div class="problem-body"><div class="problem-fix">还没有拿到检查结果。</div></div></div>`
+          : checks.map((c) => `
+            <div class="problem">
+              <span class="problem-tag" data-level="${c.level}">${LABEL[c.level] ?? c.level}</span>
+              <div class="problem-body">
+                <div class="problem-title">${esc(c.title)}</div>
+                ${c.detail ? `<div class="problem-fix">${esc(c.detail)}</div>` : ""}
+                ${c.fix ? `<div class="problem-fix"><b>怎么处理：</b>${esc(c.fix)}</div>` : ""}
+              </div>
+            </div>`).join("")}
       </div>
     </section>
     <section class="section">
-      <div class="section-head"><h2 class="section-title">自检范围</h2></div>
-      <div class="panel">
-        <div class="problem"><div class="problem-body"><div class="problem-fix">
-          端口占用与系统保留段 · PATH 实际生效项与顺序 · 制品哈希抽检 · 孤儿进程 ·
-          自启注册项与实例表一致性 · 磁盘配额 · 残留 staging 目录。
-          这些问题只列出来并给修复建议，不会替你自动改。
-        </div></div></div>
+      <div class="section-head"><h2 class="section-title">这套检查是谁做的</h2></div>
+      <div class="panel notice">
+        <p>全部由侧车在本地计算：解析组件目录、试写数据目录、比对已激活组件与命令行入口、
+           检测 PATH 里有没有 docker。</p>
+        <p class="faint">没有远程上报，也不会替用户改环境。留空的是还没实现的部分，
+          不是"检查通过"。</p>
       </div>
     </section>`;
 }
@@ -903,6 +882,11 @@ async function boot() {
     state.shimDir = catalog.shimDir ?? "";
     state.shims = catalog.shims ?? 0;
   }
+  const info = await host.invoke("devbox/state", {}).catch(() => null);
+  if (info) state.info = info;
+  const doctor = await host.invoke("devbox/doctor", {}).catch(() => null);
+  if (doctor?.checks) state.checks = doctor.checks;
+
   // 排障用：宿主里可以直接看到界面拿到的是哪个目录版本
   document.getElementById("app").dataset.revision = state.revision || "none";
   document.getElementById("app").dataset.hostmode = host.mode;
@@ -919,4 +903,13 @@ async function boot() {
   render();
 }
 
-boot();
+// 启动失败也要说出来：白屏比报错更难排查，用户只能猜
+boot().catch((err) => {
+  const box = document.createElement("div");
+  box.className = "boot-error";
+  box.innerHTML = `<div class="notice-title">dev-box 启动失败</div>
+    <pre>${String(err && err.stack ? err.stack : err)}</pre>
+    <p class="faint">把这段发回给开发者即可。界面本身没问题，是初始化时抛了异常。</p>`;
+  document.body.appendChild(box);
+  console.error(err);
+});

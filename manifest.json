@@ -6,7 +6,7 @@
   "version": "0.1.0",
   "publisher": "devbox",
   "description": "一键搭建本地开发环境：JDK / Maven / MySQL / Redis / Nginx / Nacos / xxl-job，支持多版本共存与秒级切换",
-  "icon": "assets/icon.svg",
+  "icon": "assets/icon.png",
   "engines": {
     "host_api": "1.4"
   },
@@ -29,7 +29,8 @@
     {
       "type": "workbench",
       "id": "com.devbox.manager.console",
-      "label": "dev-box"
+      "label": "dev-box",
+      "icon": "assets/icon.png"
     }
   ]
 }
