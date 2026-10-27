@@ -104,6 +104,8 @@ components:
             size: 9202456
             format: zip
             strip_components: 1
+        provides:
+          binaries: [mvn]
         requires:
           - { component: jdk, range: ">=8" }
 
@@ -128,6 +130,8 @@ components:
             size: 9000000
             format: zip
             strip_components: 1
+        provides:
+          binaries: [mvn]
         requires:
           - { component: jdk, range: ">=8" }
 

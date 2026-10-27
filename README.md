@@ -39,6 +39,7 @@ Design document: [`docs/plugin-architecture.md`](./docs/plugin-architecture.md) 
 | Catalog (YAML) | Parsed; changing a recipe needs no code change |
 | Verified recipes | **Maven 3.9.9 / 3.8.8**, **Node.js 22.11.0** — everything else is still a placeholder |
 | Version switching | **Working**: `current/<component>` link flips between installed versions in milliseconds |
+| PATH integration | **Working**: `$DATA/bin` holds shims that forward through `current/`, so switching versions needs no PATH change |
 | Dependency resolution | Logic + tests done, not yet wired into the install flow |
 | Container (Docker) backend | Planning only — no `docker` calls yet |
 | Persistence (`detached` / `autostart`) | Not implemented (needs daemon mode) |
@@ -79,6 +80,14 @@ cargo build --manifest-path backend/engine/Cargo.toml --bin devbox-install
   --component maven --version 3.9.9 \
   --data /tmp/devbox-data
 ```
+
+Then generate the command-line entry points:
+
+```bash
+./backend/engine/target/debug/devbox-shim --data /tmp/devbox-data --catalog catalog/jdk.yaml
+```
+
+It prints the one line you need to add to your shell config. We never edit it for you.
 
 Expected output:
 

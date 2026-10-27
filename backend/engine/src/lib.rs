@@ -8,7 +8,9 @@ pub mod catalog;
 pub mod checksum;
 pub mod extract;
 pub mod fetch;
+pub mod shim;
 pub mod store;
 
 pub use activate::{activate, current, deactivate, Activation};
+pub use shim::{refresh as refresh_shims, ShimReport};
 pub use store::{install, InstallError, InstallOutcome, InstallSpec};

@@ -46,6 +46,8 @@ const state = {
   query: "",
   filter: "all",
   revision: "",
+  shimDir: "",
+  shims: 0,
   showNewInstance: false,
   newPrefill: null,
   openLogs: null,
@@ -135,7 +137,12 @@ async function connectHost() {
       if (method === "devbox/ping") return { platform: state.platform, mode: "mock" };
       // 演示宿主也要走同一条目录接口，否则界面在浏览器里和真实宿主里行为不一致
       if (method === "devbox/catalog") {
-        return { revision: "2026.10.27-m0 (mock)", components: state.components };
+        return {
+          revision: "2026.10.27-m0 (mock)",
+          components: state.components,
+          shimDir: "<data>/bin",
+          shims: state.components.filter((c) => c.active && c.installed?.length).length * 2,
+        };
       }
       if (method === "devbox/install") {
         const jobId = `mock-${seq++}`;
@@ -419,6 +426,12 @@ function renderOverview() {
             </div>
           </div>`).join("")}
       </div>
+      ${state.shims > 0
+        ? `<p class="path-hint">命令行入口已生成 ${state.shims} 个：<code>${esc(state.shimDir)}</code> —— 把这一层加进 PATH 后，${state.components
+            .filter((c) => c.active)
+            .map((c) => c.label)
+            .join(" / ")} 就能直接在终端里用；切换版本不需要重新配置。</p>`
+        : `<p class="path-hint">还没有生成命令行入口。给某个组件选一个版本后，这里会出现 $DATA/bin 的路径。</p>`}
     </section>
 
     <section class="section">
@@ -887,6 +900,8 @@ async function boot() {
   if (catalog?.components?.length) {
     state.components = catalog.components;
     state.revision = catalog.revision ?? "";
+    state.shimDir = catalog.shimDir ?? "";
+    state.shims = catalog.shims ?? 0;
   }
   // 排障用：宿主里可以直接看到界面拿到的是哪个目录版本
   document.getElementById("app").dataset.revision = state.revision || "none";

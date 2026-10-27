@@ -88,6 +88,8 @@ fn dispatch(
                 Ok((revision, components)) => Ok(json!({
                     "revision": revision,
                     "components": components,
+                    "shimDir": data_root().join("bin").display().to_string(),
+                    "shims": count_shims(&data_root()),
                 })),
                 Err(message) => Ok(json!({
                     "revision": format!("mock ({message})"),
@@ -137,12 +139,17 @@ fn dispatch(
                 .and_then(Value::as_str)
                 .ok_or((-32602, "missing version".to_string()))?;
             match devbox_engine::activate(&data_root(), component, version, &platform.key()) {
-                Ok(a) => Ok(json!({
-                    "ok": true,
-                    "component": a.component,
-                    "version": a.version,
-                    "previous": a.previous,
-                })),
+                Ok(a) => {
+                    // 入口是幂等的，切完顺手刷新一次；失败不影响激活本身
+                    let shims = refresh_shims(&data_root(), platform).unwrap_or(0);
+                    Ok(json!({
+                        "ok": true,
+                        "component": a.component,
+                        "version": a.version,
+                        "previous": a.previous,
+                        "shims": shims,
+                    }))
+                }
                 Err(e) => Err((-32001, e.to_string())),
             }
         }
@@ -182,6 +189,21 @@ fn dispatch(
 
         other => Err((-32601, format!("method not found: {other}"))),
     }
+}
+
+/// 刷新 `$DATA/bin` 里的命令行入口，返回生成的个数。
+fn refresh_shims(root: &std::path::Path, platform: PlatformKey) -> Option<usize> {
+    let path = catalog_path()?;
+    let catalog = Catalog::from_file(&path).ok()?;
+    devbox_engine::shim::refresh(root, &catalog, platform)
+        .ok()
+        .map(|report| report.created.len())
+}
+
+fn count_shims(root: &std::path::Path) -> usize {
+    std::fs::read_dir(root.join("bin"))
+        .map(|entries| entries.flatten().count())
+        .unwrap_or(0)
 }
 
 /// 已装版本扫描：只看 `store/<id>/<ver>/<platform>/.devbox-ok`。

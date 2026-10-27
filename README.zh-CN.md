@@ -35,6 +35,7 @@ RocketMQ、Nacos、xxl-job-admin，多版本共存，切换只要毫秒级。
 | 目录（YAML） | 已解析；加组件只写 YAML，不改代码 |
 | 已验证的配方 | **Maven 3.9.9 / 3.8.8**、**Node.js 22.11.0**，其余仍是占位符 |
 | 版本切换 | **可用**：`current/<组件>` 链接在已装版本间切换，毫秒级 |
+| 命令行入口 | **可用**：`$DATA/bin` 里是从 `current/` 转发的入口，切版本不用改 PATH |
 | 依赖求解 | 逻辑与测试完成，尚未接进安装流程 |
 | 容器（Docker）后端 | 只有规划逻辑，还没真正调用 `docker` |
 | 常驻（`detached` / `autostart`） | 未实现（依赖 daemon 模式） |
@@ -75,6 +76,14 @@ cargo build --manifest-path backend/engine/Cargo.toml --bin devbox-install
   --component maven --version 3.9.9 \
   --data /tmp/devbox-data
 ```
+
+再生成命令行入口：
+
+```bash
+./backend/engine/target/debug/devbox-shim --data /tmp/devbox-data --catalog catalog/jdk.yaml
+```
+
+它会打印你需要加进 shell 配置的那一行。我们不会替你改。
 
 预期输出：
 

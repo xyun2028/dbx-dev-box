@@ -8,6 +8,10 @@ description = "devbox 引擎：下载、换源、校验、安全解压、原子�
 name = "devbox-install"
 path = "src/bin/install.rs"
 
+[[bin]]
+name = "devbox-shim"
+path = "src/bin/devbox-shim.rs"
+
 [dependencies]
 devbox-core = { path = "../core" }
 ureq = { version = "2", default-features = false, features = ["tls", "gzip"] }
