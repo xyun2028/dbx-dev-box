@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use devbox_core::job::{Job, Phase};
 use devbox_core::platform::PlatformKey;
+use devbox_core::READY_MARKER;
 use devbox_core::CORE_VERSION;
 use devbox_engine::catalog::Catalog;
 use devbox_engine::{install, InstallSpec};
@@ -81,10 +82,19 @@ fn dispatch(
             "mode": "stdio",
         })),
 
-        "devbox/catalog" => Ok(json!({
-            "revision": "m0-static",
-            "components": mock_catalog(platform),
-        })),
+        "devbox/catalog" => {
+            // 优先返回真实目录；读不到才退回演示数据（并在 rev 上标出来）
+            match catalog_payload(&data_root(), platform) {
+                Ok((revision, components)) => Ok(json!({
+                    "revision": revision,
+                    "components": components,
+                })),
+                Err(message) => Ok(json!({
+                    "revision": format!("mock ({message})"),
+                    "components": mock_catalog(platform),
+                })),
+            }
+        }
 
         "devbox/install" => {
             let component = params
@@ -151,6 +161,65 @@ fn dispatch(
 
         other => Err((-32601, format!("method not found: {other}"))),
     }
+}
+
+/// 已装版本扫描：只看 `store/<id>/<ver>/<platform>/.devbox-ok`。
+/// 没有标记的目录都算未完成，不能出现在"已安装"里。
+fn installed_versions(root: &std::path::Path, component: &str, platform: &str) -> Vec<String> {
+    let dir = root.join("store").join(component);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().join(platform).join(READY_MARKER).is_file())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    out.sort();
+    out
+}
+
+/// 把 catalog 翻译成 UI 能直接渲染的结构。
+/// `unverified` 是关键信息：这些版本的校验值还是占位符，装了也会被拒绝。
+fn catalog_payload(
+    root: &std::path::Path,
+    platform: PlatformKey,
+) -> Result<(String, Value), String> {
+    let path = catalog_path().ok_or("未找到组件目录")?;
+    let catalog = Catalog::from_file(&path).map_err(|e| e.to_string())?;
+    let key = platform.key();
+
+    let mut components: Vec<Value> = Vec::new();
+    for component in &catalog.components {
+        let mut versions: Vec<String> = Vec::new();
+        let mut unverified: Vec<String> = Vec::new();
+
+        for (version, entry) in &component.versions {
+            if !entry.artifacts.contains_key(&key) {
+                continue;
+            }
+            versions.push(version.clone());
+            if catalog.install_spec(&component.id, version, &key).is_err() {
+                unverified.push(version.clone());
+            }
+        }
+        if versions.is_empty() {
+            continue; // 当前平台没有制品，就不出现在列表里
+        }
+
+        components.push(json!({
+            "id": component.id,
+            "kind": component.kind,
+            "label": component.label.clone().unwrap_or_else(|| component.id.clone()),
+            "category": component.category.clone().unwrap_or_else(|| "other".to_string()),
+            "versions": versions,
+            "unverified": unverified,
+            "installed": installed_versions(root, &component.id, &key),
+            "docker": component.kind == "service",
+        }));
+    }
+
+    Ok((catalog.revision.clone(), Value::Array(components)))
 }
 
 /// 组件目录随插件包发布，所以按"包内相对路径"找：

@@ -29,6 +29,8 @@ pub struct Component {
     #[serde(default)]
     pub label: Option<String>,
     #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
     pub versions: BTreeMap<String, VersionEntry>,
 }
 

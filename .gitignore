@@ -8,6 +8,7 @@ dist/
 
 # ---- 本地助手/编辑器工作数据 ----
 .workbuddy/
+.fastRequest/
 .idea/
 .vscode/
 *.iml

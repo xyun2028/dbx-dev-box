@@ -45,6 +45,7 @@ const state = {
   docker: { available: true, version: "27.3.1" },
   query: "",
   filter: "all",
+  revision: "",
   showNewInstance: false,
   newPrefill: null,
   openLogs: null,
@@ -88,15 +89,13 @@ const state = {
     },
   ],
 
+  // 与 catalog/jdk.yaml 保持一致：只有 maven 有真实校验值。
+  // 演示数据也不许比真实情况"多能给"，否则截图和产品会对不上。
   components: [
-    { id: "jdk", label: "JDK", kind: "toolchain", category: "java", desc: "Eclipse Temurin，多版本共存，切换只是改指针", versions: ["21.0.5", "17.0.13", "8.0.432"], installed: ["21.0.5", "17.0.13"], active: "21.0.5", sizeMb: 190 },
-    { id: "maven", label: "Maven", kind: "toolchain", category: "java", desc: "构建工具，运行时需要 JDK，会自动关联", versions: ["3.9.9", "3.8.8"], installed: ["3.9.9"], active: "3.9.9", sizeMb: 9, requires: [{ component: "jdk", range: ">=8" }] },
-    { id: "mysql", label: "MySQL", kind: "service", category: "database", desc: "实例化管理，同版本可跑多个库，数据与程序分离", versions: ["8.4.3", "8.0.40", "5.7.44"], installed: ["8.4.3"], sizeMb: 245, docker: true },
-    { id: "redis", label: "Redis", kind: "service", category: "database", desc: "键值缓存，支持多实例与独立端口", versions: ["7.4.1", "7.2.6"], installed: [], sizeMb: 12, docker: true, nativeUnsupported: "Windows 本机无官方发行版" },
-    { id: "nginx", label: "Nginx", kind: "service", category: "web", desc: "反向代理与静态服务，配置由模板渲染", versions: ["1.27.2", "1.26.2"], installed: [], sizeMb: 5, docker: true },
-    { id: "nacos", label: "Nacos", kind: "service", category: "middleware", desc: "注册中心与配置中心，依赖 JDK 17+，自动先装", versions: ["2.3.2", "2.2.3"], installed: [], sizeMb: 130, docker: true, requires: [{ component: "jdk", range: ">=17 <22" }] },
-    { id: "rocketmq", label: "RocketMQ", kind: "service", category: "middleware", desc: "消息队列，NameServer 与 Broker 作为一组实例管理", versions: ["5.3.1", "4.9.8"], installed: [], sizeMb: 60, docker: true },
-    { id: "xxl-job-admin", label: "xxl-job-admin", kind: "service", category: "middleware", desc: "分布式任务调度，初始化需要 MySQL，会自动建库", versions: ["2.4.2", "2.3.1"], installed: [], sizeMb: 45, docker: true, requires: [{ component: "jdk", range: ">=8 <22" }, { component: "mysql", range: ">=8" }], initSql: true },
+    { id: "jdk", label: "JDK", kind: "toolchain", category: "java", desc: "Eclipse Temurin，多版本共存，切换只是改指针", versions: ["21.0.5", "17.0.13"], installed: [], unverified: ["21.0.5", "17.0.13"], active: null, sizeMb: 190 },
+    { id: "maven", label: "Maven", kind: "toolchain", category: "java", desc: "构建工具，运行时需要 JDK，会自动关联", versions: ["3.9.9"], installed: ["3.9.9"], unverified: [], active: "3.9.9", sizeMb: 9, requires: [{ component: "jdk", range: ">=8" }] },
+    { id: "mysql", label: "MySQL", kind: "service", category: "database", desc: "实例化管理，同版本可跑多个库，数据与程序分离", versions: ["8.4.3"], installed: [], unverified: ["8.4.3"], sizeMb: 245, docker: true },
+    { id: "nacos", label: "Nacos", kind: "service", category: "middleware", desc: "注册中心与配置中心，依赖 JDK 17+，自动先装", versions: ["2.3.2"], installed: [], unverified: ["2.3.2"], sizeMb: 130, docker: true, requires: [{ component: "jdk", range: ">=17 <22" }] },
   ],
 
   instances: [
@@ -133,6 +132,10 @@ async function connectHost() {
     onEvent: (fn) => listeners.add(fn),
     async invoke(method, params = {}) {
       if (method === "devbox/ping") return { platform: state.platform, mode: "mock" };
+      // 演示宿主也要走同一条目录接口，否则界面在浏览器里和真实宿主里行为不一致
+      if (method === "devbox/catalog") {
+        return { revision: "2026.10.27-m0 (mock)", components: state.components };
+      }
       if (method === "devbox/install") {
         const jobId = `mock-${seq++}`;
         const phases = ["plan", "download", "verify", "extract", "commit", "ready"];
@@ -634,47 +637,66 @@ function renderCatalog() {
   const items = state.components.filter(
     (c) =>
       (state.filter === "all" || c.category === state.filter) &&
-      (!q || `${c.id} ${c.label} ${c.desc}`.toLowerCase().includes(q))
+      (!q || `${c.id} ${c.label} ${c.desc ?? ""}`.toLowerCase().includes(q))
+  );
+  const unverifiedCount = state.components.reduce(
+    (n, c) => n + (c.unverified?.length ?? 0),
+    0
   );
 
   $("view-catalog").innerHTML = `
     <p class="section-note">
-      组件目录随插件版本发布（rev 2026.10.27-m0），新增组件版本需等商店审核；
-      本机与容器两种后端共用同一份配方。
+      目录随插件版本发布（rev ${esc(state.revision || "—")}），新增组件版本需等商店审核。
+      ${unverifiedCount
+        ? `其中 ${unverifiedCount} 个版本的校验值仍是占位符，会被引擎拒绝——先把配方验过才能装。`
+        : ""}
     </p>
     <div class="filters">
       ${categories.map((f) => `<button class="filter" data-action="filter" data-id="${f.id}" aria-pressed="${state.filter === f.id}">${f.label}</button>`).join("")}
     </div>
     ${items.length === 0 ? `<div class="empty">没有匹配的组件</div>` : `
     <div class="cards">
-      ${items.map((c) => `
+      ${items.map((c) => {
+        const unv = c.unverified ?? [];
+        const installed = c.installed ?? [];
+        const allUnverified = c.versions.length > 0 && unv.length >= c.versions.length;
+        const toolchain = c.kind !== "service";
+        return `
         <div class="card">
           <div class="card-top">
             <h3 class="card-name">${esc(c.label)}</h3>
-            <span class="chip">${c.kind === "service" ? "服务" : "工具链"}</span>
-            ${c.installed.length ? `<span class="chip chip-ok">已装 ${c.installed.length}</span>` : ""}
+            <span class="chip">${toolchain ? "工具链" : "服务"}</span>
+            ${installed.length ? `<span class="chip chip-ok">已装 ${esc(installed.join(", "))}</span>` : ""}
+            ${unv.length ? `<span class="chip chip-warn">未验证</span>` : ""}
           </div>
-          <p class="card-desc">${esc(c.desc)}</p>
+          <p class="card-desc">${esc(c.desc ?? "")}</p>
           <div class="card-meta">
-            <span>约 ${c.sizeMb} MB</span>
+            ${c.sizeMb ? `<span>约 ${c.sizeMb} MB</span>` : ""}
             <span>${c.versions.length} 个版本</span>
             ${c.docker ? `<span>支持容器</span>` : `<span>仅本机</span>`}
             ${c.requires?.length ? `<span>依赖 ${c.requires.map((r) => `${r.component.toUpperCase()} ${r.range}`).join("、")}</span>` : ""}
             ${c.initSql ? `<span>自动建库</span>` : ""}
             ${c.active ? `<span>当前 ${c.active}</span>` : ""}
           </div>
-          ${c.nativeUnsupported
-            ? `<span class="unsupported">${esc(c.nativeUnsupported)}，创建实例时会走容器</span>`
-            : ""}
           <div class="card-foot">
             <select class="select" data-role="version" data-id="${c.id}" aria-label="${esc(c.label)} 版本">
-              ${c.versions.map((v) => `<option value="${v}">${v}${c.installed.includes(v) ? " · 已装" : ""}</option>`).join("")}
+              ${c.versions
+                .map((v) => {
+                  const bad = unv.includes(v);
+                  const have = installed.includes(v);
+                  return `<option value="${v}"${bad ? ' data-unv="1"' : ""}>${v}${have ? " · 已装" : ""}${bad ? " · 未验证" : ""}</option>`;
+                })
+                .join("")}
             </select>
-            ${c.kind === "service"
-              ? `<button class="btn btn-sm btn-primary" data-action="new-for" data-id="${c.id}">新建实例</button>`
-              : `<button class="btn btn-sm btn-primary" data-action="install" data-id="${c.id}">安装</button>`}
+            ${toolchain
+              ? `<button class="btn btn-sm btn-primary" data-action="install" data-id="${c.id}"
+                   ${allUnverified ? 'disabled title="这份配方的校验值还是占位符，装了也会被拒绝"' : ""}>
+                   安装
+                 </button>`
+              : `<button class="btn btn-sm btn-primary" data-action="new-for" data-id="${c.id}">新建实例</button>`}
           </div>
-        </div>`).join("")}
+        </div>`;
+      }).join("")}
     </div>`}`;
 }
 
@@ -809,6 +831,14 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("change", (e) => {
+  // 选到"未验证"的版本就把安装按钮禁掉，别让人点了才看到红色报错
+  const versionSelect = e.target.closest('[data-role="version"]');
+  if (versionSelect) {
+    const btn = versionSelect.closest(".card")?.querySelector('[data-action="install"]');
+    if (btn) btn.disabled = versionSelect.selectedOptions[0]?.dataset.unv === "1";
+    return;
+  }
+
   const el = e.target.closest("[data-change]");
   if (!el) return;
   if (el.dataset.change === "persist") setPersist(el.dataset.id, el.value);
@@ -844,6 +874,16 @@ async function boot() {
   const ping = await host.invoke("devbox/ping", {}).catch(() => null);
   if (ping?.platform) state.platform = ping.platform;
   state.runtime = ping?.mode ?? state.mode;
+
+  // 目录来自 sidecar；拿不到才保留内置的演示数据
+  const catalog = await host.invoke("devbox/catalog", {}).catch(() => null);
+  if (catalog?.components?.length) {
+    state.components = catalog.components;
+    state.revision = catalog.revision ?? "";
+  }
+  // 排障用：宿主里可以直接看到界面拿到的是哪个目录版本
+  document.getElementById("app").dataset.revision = state.revision || "none";
+  document.getElementById("app").dataset.hostmode = host.mode;
 
   host.onEvent(({ event, data }) => {
     if (event !== "evt/job.progress" || !data?.jobId) return;
